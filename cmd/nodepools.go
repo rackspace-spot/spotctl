@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/rackerlabs/spot-cli/internal"
-	rxtspot "github.com/rackerlabs/spot-sdk/rxtspot/api/v1"
+	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
+	"github.com/rackspace-spot/spotcli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -38,8 +38,9 @@ var spotListCmd = &cobra.Command{
 	Long:  `List all spot node pools in a org.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			return fmt.Errorf("org is required")
+		cloudspace, _ := cmd.Flags().GetString("cloudspace")
+		if org == "" || cloudspace == "" {
+			return fmt.Errorf("org and cloudspace are required")
 		}
 
 		client, err := internal.NewClient()
@@ -47,7 +48,7 @@ var spotListCmd = &cobra.Command{
 			return fmt.Errorf("failed to create client: %w", err)
 		}
 
-		pools, err := client.GetAPI().ListSpotNodePools(context.Background(), org)
+		pools, err := client.GetAPI().ListSpotNodePools(context.Background(), org, cloudspace)
 		if err != nil {
 			return fmt.Errorf("failed to list spot node pools: %w", err)
 		}
@@ -85,20 +86,18 @@ var spotCreateCmd = &cobra.Command{
 
 		pool := rxtspot.SpotNodePool{
 			Name:        name,
-			Namespace:   org,
+			Org:         org,
 			Cloudspace:  cloudspace,
 			ServerClass: serverClass,
 			Desired:     desired,
 			BidPrice:    bidPrice,
 		}
 
-		created, err := client.GetAPI().CreateSpotNodePool(context.Background(), pool)
+		err = client.GetAPI().CreateSpotNodePool(context.Background(), pool)
 		if err != nil {
 			return fmt.Errorf("failed to create spot node pool: %w", err)
 		}
-
-		fmt.Printf("Spot node pool '%s' created successfully\n", created.Name)
-		return internal.OutputData(created, outputFormat)
+		return internal.OutputData(pool, outputFormat)
 	},
 }
 
@@ -155,19 +154,18 @@ var ondemandCreateCmd = &cobra.Command{
 
 		pool := rxtspot.OnDemandNodePool{
 			Name:        name,
-			Namespace:   org,
+			Org:         org,
 			Cloudspace:  cloudspace,
 			ServerClass: serverClass,
 			Desired:     desired,
 		}
 
-		created, err := client.GetAPI().CreateOnDemandNodePool(context.Background(), pool)
+		err = client.GetAPI().CreateOnDemandNodePool(context.Background(), pool)
 		if err != nil {
 			return fmt.Errorf("failed to create on-demand node pool: %w", err)
 		}
 
-		fmt.Printf("On-demand node pool '%s' created successfully\n", created.Name)
-		return internal.OutputData(created, outputFormat)
+		return internal.OutputData(pool, outputFormat)
 	},
 }
 
@@ -189,7 +187,7 @@ func init() {
 	spotListCmd.MarkFlagRequired("org")
 
 	// Flags for spot create
-	spotCreateCmd.Flags().String("name", "", "Node pool name (required)")
+	spotCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid UUID) (required)")
 	spotCreateCmd.Flags().StringP("org", "o", "", "Organization (required)")
 	spotCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	spotCreateCmd.Flags().String("server-class", "", "Server class (required)")
@@ -207,7 +205,7 @@ func init() {
 	ondemandListCmd.MarkFlagRequired("org")
 
 	// Flags for ondemand create
-	ondemandCreateCmd.Flags().String("name", "", "Node pool name (required)")
+	ondemandCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid UUID) (required)")
 	ondemandCreateCmd.Flags().StringP("org", "o", "", "Organization (required)")
 	ondemandCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	ondemandCreateCmd.Flags().String("server-class", "", "Server class (required)")

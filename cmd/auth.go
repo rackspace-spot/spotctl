@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rackerlabs/spot-cli/internal"
+	"github.com/rackspace-spot/spotcli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +32,7 @@ export SPOT_REFRESH_TOKEN=your_refresh_token_here`,
 		if verbose {
 			fmt.Printf("Authenticated organizations: %v\n", orgs)
 		}
-
+		//fmt.Printf("client token - %+v \n", client.Authenticate(context.Background()))
 		return nil
 	},
 }

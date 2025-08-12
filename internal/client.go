@@ -3,9 +3,11 @@ package internal
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
-	rxtspot "github.com/rackerlabs/spot-sdk/rxtspot/api/v1"
+	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 )
 
 // Client wraps the Spot SDK client with CLI-specific functionality
@@ -19,13 +21,19 @@ func NewClient() (*Client, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("SPOT_REFRESH_TOKEN environment variable is required")
 	}
+	cfg := rxtspot.Config{BaseURL: "https://spot.rackspace.com",
+		OAuthURL:     "https://login.spot.rackspace.com",
+		HTTPClient:   &http.Client{Timeout: 30 * time.Second},
+		RefreshToken: refreshToken,
+		Timeout:      30 * time.Second}
 
-	api := rxtspot.NewClient(refreshToken)
-	if err := api.Authenticate(context.Background()); err != nil {
+	client := rxtspot.NewClient(cfg)
+
+	if err := client.Authenticate(context.Background()); err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
-	return &Client{api: api}, nil
+	return &Client{api: client}, nil
 }
 
 // GetAPI returns the underlying Spot API client
@@ -38,6 +46,6 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return c.api.Authenticate(ctx)
 }
 
-func (c *Client) ListSpotNodePools(ctx context.Context, org string) ([]rxtspot.SpotNodePool, error) {
-	return c.api.ListSpotNodePools(ctx, org)
-}
+// func (c *Client) ListSpotNodePools(ctx context.Context, org string, cloudspace string) ([]*rxtspot.SpotNodePool, error) {
+// 	return c.api.ListSpotNodePools(ctx, org, cloudspace)
+// }

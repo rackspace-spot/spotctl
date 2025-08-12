@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rackerlabs/spot-cli/internal"
+	"github.com/rackspace-spot/spotcli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +55,7 @@ var organizationsGetCmd = &cobra.Command{
 
 		// Find the organization with the matching org
 		for _, organization := range orgs {
-			if organization.Namespace == org {
+			if organization.ID == org {
 				return internal.OutputData(organization, outputFormat)
 			}
 		}
