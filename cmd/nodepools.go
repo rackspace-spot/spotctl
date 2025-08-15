@@ -7,6 +7,7 @@ import (
 
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotcli/internal"
+	config "github.com/rackspace-spot/spotcli/pkg"
 	"github.com/spf13/cobra"
 )
 
@@ -37,10 +38,13 @@ var spotListCmd = &cobra.Command{
 	Short: "List spot node pools",
 	Long:  `List all spot node pools in a org.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		org, _ := cmd.Flags().GetString("org")
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
-		if org == "" || cloudspace == "" {
-			return fmt.Errorf("org and cloudspace are required")
+		if cloudspace == "" {
+			return fmt.Errorf("cloudspace is required")
+		}
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
 		}
 
 		client, err := internal.NewClient()
@@ -64,14 +68,17 @@ var spotCreateCmd = &cobra.Command{
 	Long:  `Create a new spot node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		serverClass, _ := cmd.Flags().GetString("server-class")
 		desiredStr, _ := cmd.Flags().GetString("desired")
 		bidPrice, _ := cmd.Flags().GetString("bid-price")
 
-		if name == "" || org == "" || cloudspace == "" || serverClass == "" || desiredStr == "" || bidPrice == "" {
-			return fmt.Errorf("name, org, cloudspace, server-class, desired, and bid-price are required")
+		if name == "" || cloudspace == "" || serverClass == "" || desiredStr == "" || bidPrice == "" {
+			return fmt.Errorf("name, cloudspace, server-class, desired, and bid-price are required")
 		}
 
 		desired, err := strconv.Atoi(desiredStr)
@@ -107,9 +114,14 @@ var ondemandListCmd = &cobra.Command{
 	Short: "List on-demand node pools",
 	Long:  `List all on-demand node pools in a org.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			return fmt.Errorf("org is required")
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
+		cloudspace, _ := cmd.Flags().GetString("cloudspace")
+
+		if org == "" || cloudspace == "" {
+			return fmt.Errorf("org and cloudspace are required")
 		}
 
 		client, err := internal.NewClient()
@@ -117,7 +129,7 @@ var ondemandListCmd = &cobra.Command{
 			return fmt.Errorf("failed to create client: %w", err)
 		}
 
-		pools, err := client.GetAPI().ListOnDemandNodePools(context.Background(), org)
+		pools, err := client.GetAPI().ListOnDemandNodePools(context.Background(), org, cloudspace)
 		if err != nil {
 			return fmt.Errorf("failed to list on-demand node pools: %w", err)
 		}
@@ -133,12 +145,15 @@ var ondemandCreateCmd = &cobra.Command{
 	Long:  `Create a new on-demand node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		serverClass, _ := cmd.Flags().GetString("server-class")
 		desiredStr, _ := cmd.Flags().GetString("desired")
 
-		if name == "" || org == "" || cloudspace == "" || serverClass == "" || desiredStr == "" {
+		if name == "" || cloudspace == "" || serverClass == "" || desiredStr == "" {
 			return fmt.Errorf("name, org, cloudspace, server-class, and desired are required")
 		}
 
@@ -188,30 +203,28 @@ func init() {
 
 	// Flags for spot create
 	spotCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid UUID) (required)")
-	spotCreateCmd.Flags().StringP("org", "o", "", "Organization (required)")
+	spotCreateCmd.Flags().StringP("org", "o", "", "Organization ID")
 	spotCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	spotCreateCmd.Flags().String("server-class", "", "Server class (required)")
 	spotCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
 	spotCreateCmd.Flags().String("bid-price", "", "Maximum bid price (required)")
 	spotCreateCmd.MarkFlagRequired("name")
-	spotCreateCmd.MarkFlagRequired("org")
 	spotCreateCmd.MarkFlagRequired("cloudspace")
 	spotCreateCmd.MarkFlagRequired("server-class")
 	spotCreateCmd.MarkFlagRequired("desired")
 	spotCreateCmd.MarkFlagRequired("bid-price")
 
 	// Flags for ondemand list
-	ondemandListCmd.Flags().StringP("org", "o", "", "Organization (required)")
+	ondemandListCmd.Flags().String("org", "", "Organization ID")
 	ondemandListCmd.MarkFlagRequired("org")
 
 	// Flags for ondemand create
 	ondemandCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid UUID) (required)")
-	ondemandCreateCmd.Flags().StringP("org", "o", "", "Organization (required)")
+	ondemandCreateCmd.Flags().String("org", "", "Organization ID")
 	ondemandCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	ondemandCreateCmd.Flags().String("server-class", "", "Server class (required)")
 	ondemandCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
 	ondemandCreateCmd.MarkFlagRequired("name")
-	ondemandCreateCmd.MarkFlagRequired("org")
 	ondemandCreateCmd.MarkFlagRequired("cloudspace")
 	ondemandCreateCmd.MarkFlagRequired("server-class")
 	ondemandCreateCmd.MarkFlagRequired("desired")

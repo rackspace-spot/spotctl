@@ -9,6 +9,7 @@ import (
 
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotcli/internal"
+	config "github.com/rackspace-spot/spotcli/pkg"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
@@ -26,9 +27,16 @@ var cloudspacesListCmd = &cobra.Command{
 	Short: "List cloudspaces",
 	Long:  `List all cloudspaces in an organization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+
 		org, _ := cmd.Flags().GetString("org")
 		if org == "" {
-			return fmt.Errorf("org is required")
+			cfg, err := config.LoadConfig()
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 
 		client, err := internal.NewClient()
@@ -52,26 +60,27 @@ var cloudspacesCreateCmd = &cobra.Command{
 	Long:  `Create a new cloudspace (Kubernetes cluster).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
-		spotNodePoolJSON, _ := cmd.Flags().GetStringArray("spot_nodepool")
-		onDemandNodePoolJSON, _ := cmd.Flags().GetStringArray("ondemand_nodepool")
-
-		region, _ := cmd.Flags().GetString("region")
-		kubernetesVersion, _ := cmd.Flags().GetString("kubernetes_version")
-		cni, _ := cmd.Flags().GetString("cni")
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
+		region, err := config.GetRegion(cmd)
+		if err != nil {
+			return err
+		}
 		configPath, _ := cmd.Flags().GetString("config")
 
-		// serverClass, _ := cmd.Flags().GetString("server_class")
-		// bidPrice, _ := cmd.Flags().GetString("bid_price")
-		// desiredNodes, _ := cmd.Flags().GetInt("desired_nodes")
+		if configPath != "" && name != "" {
+			return fmt.Errorf("either --config must be provided OR --name must be set")
+		}
+
+		spotNodePoolJSON, _ := cmd.Flags().GetStringArray("spot_nodepool")
+		onDemandNodePoolJSON, _ := cmd.Flags().GetStringArray("ondemand_nodepool")
+		kubernetesVersion, _ := cmd.Flags().GetString("kubernetes_version")
+		cni, _ := cmd.Flags().GetString("cni")
 
 		var cloudspace *rxtspot.CloudSpace
 		var spotnodepool *rxtspot.SpotNodePool
-		//var ondemandnodepool *rxtspot.OnDemandNodePool
-
-		if name == "" || org == "" || region == "" {
-			return fmt.Errorf("name, org, and region are required")
-		}
 
 		client, err := internal.NewClient()
 		if err != nil {
@@ -80,21 +89,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 		var spotnodepools []rxtspot.SpotNodePool
 		var ondemandnodepools []rxtspot.OnDemandNodePool
-		// cloudspace := rxtspot.CloudSpace{
-		// 	Name:              name,
-		// 	OrgID:             org,
-		// 	Region:            region,
-		// 	KubernetesVersion: kubernetesVersion,
-		// 	Cni:               cni,
-		// }
 
-		// spotnodepool := rxtspot.SpotNodePool{
-		// 	Org:         org,
-		// 	Cloudspace:  cloudspace.Name,
-		// 	ServerClass: serverClass,
-		// 	BidPrice:    bidPrice,
-		// 	Desired:     desiredNodes,
-		// }
 		if configPath != "" {
 			// Read config file (YAML or JSON)
 			b, err := os.ReadFile(configPath)
@@ -146,8 +141,8 @@ var cloudspacesCreateCmd = &cobra.Command{
 			}
 		} else {
 			// Use CLI flags
-			if name == "" || org == "" || region == "" {
-				return fmt.Errorf("name, org, and region are required (or provide --config)")
+			if name == "" {
+				return fmt.Errorf("name is required")
 			}
 
 			cloudspace = &rxtspot.CloudSpace{
@@ -192,7 +187,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 				ondemandnodepools = append(ondemandnodepools, pool)
 			}
-			if spotNodePoolJSON == nil && onDemandNodePoolJSON == nil && configPath == "" {
+			if len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 && configPath == "" {
 				spotnodepool = &rxtspot.SpotNodePool{
 					Org:         cloudspace.OrgID,
 					Cloudspace:  cloudspace.Name,
@@ -222,6 +217,12 @@ var cloudspacesCreateCmd = &cobra.Command{
 		if cloudspace != nil {
 			err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
 			if err != nil {
+				if rxtspot.IsForbidden(err) {
+					return fmt.Errorf("forbidden: %w", err)
+				}
+				if rxtspot.IsConflict(err) {
+					return fmt.Errorf("conflict: %w", err)
+				}
 				return fmt.Errorf("failed to create cloudspace: %w", err)
 			}
 		}
@@ -229,18 +230,29 @@ var cloudspacesCreateCmd = &cobra.Command{
 		for _, spotnodepool := range spotnodepools {
 			err = client.GetAPI().CreateSpotNodePool(context.Background(), spotnodepool)
 			if err != nil {
+				if rxtspot.IsForbidden(err) {
+					return fmt.Errorf("forbidden: %w", err)
+				}
+				if rxtspot.IsConflict(err) {
+					return fmt.Errorf("conflict: %w", err)
+				}
 				return fmt.Errorf("failed to create spot node pool: %w", err)
 			}
+			fmt.Printf("Spot node pool created successfully\n")
 		}
 		for _, ondemandnodepool := range ondemandnodepools {
 			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), ondemandnodepool)
 			if err != nil {
+				if rxtspot.IsForbidden(err) {
+					return fmt.Errorf("forbidden: %w", err)
+				}
+				if rxtspot.IsConflict(err) {
+					return fmt.Errorf("conflict: %w", err)
+				}
 				return fmt.Errorf("failed to create on-demand node pool: %w", err)
 			}
+			fmt.Printf("On-demand node pool created successfully\n")
 		}
-
-		fmt.Printf("Spot node pool created successfully\n")
-		fmt.Printf("On-demand node pool created successfully\n")
 		fmt.Printf("Cloudspace '%s' created successfully\n", cloudspace.Name)
 
 		return internal.OutputData(cloudspace, outputFormat)
@@ -253,13 +265,15 @@ var cloudspacesGetCmd = &cobra.Command{
 	Short: "Get cloudspace details",
 	Long:  `Get details for a specific cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+
 		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
-
-		if name == "" || org == "" {
-			return fmt.Errorf("name and org are required")
+		if name == "" {
+			return fmt.Errorf("name is required")
 		}
-
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
 		client, err := internal.NewClient()
 		if err != nil {
 			return err
@@ -267,6 +281,15 @@ var cloudspacesGetCmd = &cobra.Command{
 
 		cloudspace, err := client.GetAPI().GetCloudspace(context.Background(), org, name)
 		if err != nil {
+			if rxtspot.IsNotFound(err) {
+				return fmt.Errorf("cloudspace '%s' not found", name)
+			}
+			if rxtspot.IsForbidden(err) {
+				return fmt.Errorf("forbidden: %w", err)
+			}
+			if rxtspot.IsConflict(err) {
+				return fmt.Errorf("conflict: %w", err)
+			}
 			return err
 		}
 
@@ -281,12 +304,13 @@ var cloudspacesDeleteCmd = &cobra.Command{
 	Long:  `Delete a cloudspace and all its resources.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
-
-		if name == "" || org == "" {
-			return fmt.Errorf("name and org are required")
+		if name == "" {
+			return fmt.Errorf("name is required")
 		}
-
+		org, err := config.GetOrg(cmd)
+		if err != nil {
+			return err
+		}
 		client, err := internal.NewClient()
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
@@ -294,6 +318,15 @@ var cloudspacesDeleteCmd = &cobra.Command{
 
 		err = client.GetAPI().DeleteCloudspace(context.Background(), org, name)
 		if err != nil {
+			if rxtspot.IsNotFound(err) {
+				return fmt.Errorf("cloudspace '%s' not found", name)
+			}
+			if rxtspot.IsForbidden(err) {
+				return fmt.Errorf("forbidden: %w", err)
+			}
+			if rxtspot.IsConflict(err) {
+				return fmt.Errorf("conflict: %w", err)
+			}
 			return fmt.Errorf("failed to delete cloudspace: %w", err)
 		}
 
@@ -310,35 +343,27 @@ func init() {
 	cloudspacesCmd.AddCommand(cloudspacesDeleteCmd)
 
 	// Add flags for cloudspaces list
-	cloudspacesListCmd.Flags().String("org", "", "Organization (required)") // Removed shorthand for org flag
-	cloudspacesListCmd.MarkFlagRequired("org")
+	cloudspacesListCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesListCmd.Flags().StringP("output", "o", "json", "Output format (json, table, yaml)")
 
 	// Add flags for cloudspaces create
-	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesCreateCmd.Flags().String("org", "", "Organization (required)") // Removed shorthand for org flag
-	cloudspacesCreateCmd.Flags().String("region", "", "Region (required)")
+	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name")
+	cloudspacesCreateCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
 	cloudspacesCreateCmd.Flags().StringP("kubernetes_version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
-	//cloudspacesCreateCmd.Flags().StringP("server_class", "", "gp.vs1.medium-iad", "Server Class (default: gp.vs1.medium-iad)")
-	//cloudspacesCreateCmd.Flags().StringP("bid_price", "", "0.01", "Bid Price (default: 0.01$)")
-	//cloudspacesCreateCmd.Flags().IntP("desired_nodes", "", 1, "Desired number of nodes (default: 1)")
+
 	cloudspacesCreateCmd.Flags().StringArray("spot_nodepool", []string{}, "Spot nodepool details as JSON string")
 	cloudspacesCreateCmd.Flags().StringArray("ondemand_nodepool", []string{}, "Ondemand nodepool details as JSON string")
 	cloudspacesCreateCmd.Flags().String("config", "", "Path to config file (YAML or JSON)")
 	cloudspacesCreateCmd.Flags().StringP("cni", "", "calico", "CNI (default: calico)")
-	cloudspacesCreateCmd.MarkFlagRequired("name")
-	cloudspacesCreateCmd.MarkFlagRequired("org")
-	cloudspacesCreateCmd.MarkFlagRequired("region")
 
 	// Add flags for cloudspaces get
 	cloudspacesGetCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesGetCmd.Flags().String("org", "", "Organization (required)") // Removed shorthand for org flag
+	cloudspacesGetCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesGetCmd.MarkFlagRequired("name")
-	cloudspacesGetCmd.MarkFlagRequired("org")
 
 	// Add flags for cloudspaces delete
 	cloudspacesDeleteCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesDeleteCmd.Flags().String("org", "", "Organization (required)") // Removed shorthand for org flag
+	cloudspacesDeleteCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesDeleteCmd.MarkFlagRequired("name")
-	cloudspacesDeleteCmd.MarkFlagRequired("org")
 }

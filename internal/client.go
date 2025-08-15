@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
+	config "github.com/rackspace-spot/spotcli/pkg"
 )
 
 // Client wraps the Spot SDK client with CLI-specific functionality
@@ -17,14 +17,17 @@ type Client struct {
 
 // NewClient creates a new CLI client
 func NewClient() (*Client, error) {
-	refreshToken := os.Getenv("SPOT_REFRESH_TOKEN")
-	if refreshToken == "" {
-		return nil, fmt.Errorf("SPOT_REFRESH_TOKEN environment variable is required")
+
+	spotConfig, _ := config.LoadConfig()
+	if spotConfig.Token == "" {
+		return nil, fmt.Errorf("token is required. Please run 'spotctl configure' to set it up")
 	}
-	cfg := rxtspot.Config{BaseURL: "https://spot.rackspace.com",
+
+	cfg := rxtspot.Config{
+		BaseURL:      "https://spot.rackspace.com",
 		OAuthURL:     "https://login.spot.rackspace.com",
 		HTTPClient:   &http.Client{Timeout: 30 * time.Second},
-		RefreshToken: refreshToken,
+		RefreshToken: spotConfig.Token,
 		Timeout:      30 * time.Second}
 
 	client := rxtspot.NewClient(cfg)
