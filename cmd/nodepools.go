@@ -100,7 +100,7 @@ var spotCreateCmd = &cobra.Command{
 			BidPrice:    bidPrice,
 		}
 
-		err = client.GetAPI().CreateSpotNodePool(context.Background(), pool)
+		err = client.GetAPI().CreateSpotNodePool(context.Background(), org, pool)
 		if err != nil {
 			return fmt.Errorf("failed to create spot node pool: %w", err)
 		}
@@ -175,7 +175,7 @@ var ondemandCreateCmd = &cobra.Command{
 			Desired:     desired,
 		}
 
-		err = client.GetAPI().CreateOnDemandNodePool(context.Background(), pool)
+		err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, pool)
 		if err != nil {
 			return fmt.Errorf("failed to create on-demand node pool: %w", err)
 		}

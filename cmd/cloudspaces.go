@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/fatih/color"
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotcli/internal"
 	config "github.com/rackspace-spot/spotcli/pkg"
@@ -50,6 +52,54 @@ var cloudspacesListCmd = &cobra.Command{
 		}
 
 		return internal.OutputData(cloudspaces, outputFormat)
+	},
+}
+
+var cloudspacesGetConfigCmd = &cobra.Command{
+	Use:   "get-config",
+	Short: "Get cloudspace/kubernetes config",
+	Long:  `Get config for a specific cloudspace.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			cfg, err := config.LoadConfig()
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		}
+
+		name, _ := cmd.Flags().GetString("name")
+		if name == "" {
+			return fmt.Errorf("name is required")
+		}
+		var filePath string
+		fileName, _ := cmd.Flags().GetString("file")
+		if fileName == "" {
+			filePath = filepath.Join(os.Getenv("HOME"), ".kube", name+".yaml")
+		} else {
+			filePath = fileName + "/" + name + ".yaml"
+		}
+		client, err := internal.NewClient()
+		if err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+		k8sConfig, err := client.GetAPI().GetCloudspaceConfig(context.Background(), org, name)
+		if err != nil {
+			return fmt.Errorf("failed to get kubernetes config: %w", err)
+		}
+
+		err = os.WriteFile(filePath, []byte(k8sConfig), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write config to file: %w", err)
+		}
+
+		fmt.Printf("Config has been saved to %s successfully\n", filePath)
+		return nil
 	},
 }
 
@@ -123,7 +173,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			// 🔹 Fill missing org/cloudspace for each spot node pool
 			for i := range spotnodepools {
 				if spotnodepools[i].Org == "" {
-					spotnodepools[i].Org = cloudspace.OrgID
+					spotnodepools[i].Org = cloudspace.Org
 				}
 				if spotnodepools[i].Cloudspace == "" {
 					spotnodepools[i].Cloudspace = cloudspace.Name
@@ -133,7 +183,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			// 🔹 Fill missing org/cloudspace for each on-demand node pool
 			for i := range ondemandnodepools {
 				if ondemandnodepools[i].Org == "" {
-					ondemandnodepools[i].Org = cloudspace.OrgID
+					ondemandnodepools[i].Org = cloudspace.Org
 				}
 				if ondemandnodepools[i].Cloudspace == "" {
 					ondemandnodepools[i].Cloudspace = cloudspace.Name
@@ -147,7 +197,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 			cloudspace = &rxtspot.CloudSpace{
 				Name:              name,
-				OrgID:             org,
+				Org:               org,
 				Region:            region,
 				KubernetesVersion: kubernetesVersion,
 				Cni:               cni,
@@ -189,18 +239,19 @@ var cloudspacesCreateCmd = &cobra.Command{
 			}
 			if len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 && configPath == "" {
 				spotnodepool = &rxtspot.SpotNodePool{
-					Org:         cloudspace.OrgID,
+					Org:         cloudspace.Org,
 					Cloudspace:  cloudspace.Name,
 					ServerClass: "gp.vs1.medium-iad", // default choice
 					Desired:     1,
 					BidPrice:    "0.08", // match struct type
 				}
 
-				fmt.Println("No spotnodepool/ondemandpool configurations are specified.")
-				fmt.Println("Default Spot Node Pool will be created with:")
-				fmt.Printf("Server Class  : %s\n", spotnodepool.ServerClass)
-				fmt.Printf("Desired Nodes : %d\n", spotnodepool.Desired)
-				fmt.Printf("Bid Price     : %s$ per hr\n", spotnodepool.BidPrice)
+				//fmt.Println("⚠️  NOTE: No spotnodepool/ondemandpool configurations are specified.")
+				color.Yellow("⚠️  NOTE: No spotnodepool/ondemandpool configurations are specified.")
+				color.Yellow("⚙️  Default Spot Node Pool will be created with:")
+				color.Yellow("• Server Class  : %s\n", spotnodepool.ServerClass)
+				color.Yellow("• Desired Nodes : %d\n", spotnodepool.Desired)
+				color.Yellow("• Bid Price     : %s$ per hr\n", spotnodepool.BidPrice)
 				fmt.Print("Proceed? (y/N): ")
 
 				var response string
@@ -210,9 +261,13 @@ var cloudspacesCreateCmd = &cobra.Command{
 					fmt.Println("Aborting as per user choice.")
 					return nil
 				}
+				spotnodepools = append(spotnodepools, *spotnodepool)
 			}
 
 		}
+		fmt.Printf("cloudspace - %+v \n", cloudspace)
+		fmt.Printf("spotnodepools - %+v \n", spotnodepools)
+		fmt.Printf("ondemandnodepools - %+v \n", ondemandnodepools)
 
 		if cloudspace != nil {
 			err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
@@ -228,7 +283,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 		}
 
 		for _, spotnodepool := range spotnodepools {
-			err = client.GetAPI().CreateSpotNodePool(context.Background(), spotnodepool)
+			err = client.GetAPI().CreateSpotNodePool(context.Background(), org, spotnodepool)
 			if err != nil {
 				if rxtspot.IsForbidden(err) {
 					return fmt.Errorf("forbidden: %w", err)
@@ -241,7 +296,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			fmt.Printf("Spot node pool created successfully\n")
 		}
 		for _, ondemandnodepool := range ondemandnodepools {
-			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), ondemandnodepool)
+			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, ondemandnodepool)
 			if err != nil {
 				if rxtspot.IsForbidden(err) {
 					return fmt.Errorf("forbidden: %w", err)
@@ -311,6 +366,19 @@ var cloudspacesDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		yes, _ := cmd.Flags().GetBool("yes")
+		if !yes {
+			// Interactive prompt
+			prompt := color.New(color.FgYellow).PrintfFunc()
+			prompt("Are you sure you want to delete cloudspace '%s'? (y/N): ", name)
+
+			var response string
+			_, err := fmt.Scanln(&response)
+			if err != nil || (response != "y" && response != "Y") {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
 		client, err := internal.NewClient()
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
@@ -341,6 +409,7 @@ func init() {
 	cloudspacesCmd.AddCommand(cloudspacesCreateCmd)
 	cloudspacesCmd.AddCommand(cloudspacesGetCmd)
 	cloudspacesCmd.AddCommand(cloudspacesDeleteCmd)
+	cloudspacesCmd.AddCommand(cloudspacesGetConfigCmd)
 
 	// Add flags for cloudspaces list
 	cloudspacesListCmd.Flags().String("org", "", "Organization ID")
@@ -362,8 +431,15 @@ func init() {
 	cloudspacesGetCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesGetCmd.MarkFlagRequired("name")
 
+	// Add flags for cloudspaces get-config
+	cloudspacesGetConfigCmd.Flags().String("name", "", "Cloudspace name (required)")
+	cloudspacesGetConfigCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesGetConfigCmd.Flags().String("file", "", "Output file name (default: <cloudspace_name>.yaml)")
+	cloudspacesGetConfigCmd.MarkFlagRequired("name")
+
 	// Add flags for cloudspaces delete
 	cloudspacesDeleteCmd.Flags().String("name", "", "Cloudspace name (required)")
 	cloudspacesDeleteCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesDeleteCmd.MarkFlagRequired("name")
+	cloudspacesDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
 }
