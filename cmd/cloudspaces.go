@@ -265,9 +265,9 @@ var cloudspacesCreateCmd = &cobra.Command{
 			}
 
 		}
-		fmt.Printf("cloudspace - %+v \n", cloudspace)
-		fmt.Printf("spotnodepools - %+v \n", spotnodepools)
-		fmt.Printf("ondemandnodepools - %+v \n", ondemandnodepools)
+		//	fmt.Printf("cloudspace - %+v \n", cloudspace)
+		//	fmt.Printf("spotnodepools - %+v \n", spotnodepools)
+		//	fmt.Printf("ondemandnodepools - %+v \n", ondemandnodepools)
 
 		if cloudspace != nil {
 			err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
@@ -307,6 +307,11 @@ var cloudspacesCreateCmd = &cobra.Command{
 				return fmt.Errorf("failed to create on-demand node pool: %w", err)
 			}
 			fmt.Printf("On-demand node pool created successfully\n")
+		}
+
+		cloudspace, err = client.GetAPI().GetCloudspace(context.Background(), org, cloudspace.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get cloudspace: %w", err)
 		}
 		fmt.Printf("Cloudspace '%s' created successfully\n", cloudspace.Name)
 
