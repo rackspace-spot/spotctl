@@ -47,22 +47,17 @@ spotctl --help
 
 ## Configuration
 
-Before using spotctl, you need to configure your credentials:
+Before using spotctl, you need to configure your credentials: You need pass the organization, region and refresh token.
 
 ```bash
 # Run the interactive configuration wizard
 spotctl configure
-
-# Or set environment variables manually
-export SPOT_ORG_ID="your_organization_id"
-export SPOT_API_TOKEN="your_api_token"
-export SPOT_REGION="your_preferred_region"  # Optional
 ```
 
 ## Available Commands
 
 ### Authentication
-- `spotctl auth` - Authenticate with Rackspace Spot
+- `spotctl configure` - Configure spotctl
 
 ### Cloudspaces (Kubernetes Clusters)
 - `spotctl cloudspaces list` - List all cloudspaces
@@ -90,7 +85,7 @@ export SPOT_REGION="your_preferred_region"  # Optional
 - `spotctl organizations get <id>` - Get organization details
 
 ### Pricing
-- `spotctl pricing get` - Get pricing information
+- `spotctl pricing get <serverclass>` - Get pricing information
 
 ## Usage Examples
 
@@ -100,50 +95,46 @@ spotctl cloudspaces list
 ```
 
 ### Create a new cloudspace
+
+#### Quick Create
 ```bash
-spotctl cloudspaces create --name my-cluster --region us-east-1
+spotctl cloudspaces create --name my-cluster --region us-east-1 
 ```
+
+#### Config File
+```bash
+spotctl cloudspaces create --config my-cluster-config.yaml
+```
+
+#### Command Line Arguments (json)
+```bash
+spotctl cloudspaces create \
+  --name <name> \
+  --region <region> \
+  --org <org> \
+  --spot-nodepool '{"desired":1,"serverclass":"gp.vs1.medium-ord","bidprice":0.08}' \
+  --ondemand-nodepool '{"desired":1,"serverclass":"gp.vs1.medium-ord"}' 
+```
+#### Command Line Arguments (comma separated)
+```bash
+spotctl cloudspaces create \
+  --name <name> \
+  --region <region> \
+  --org <org> \
+  --spot-nodepool desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08 \
+  --ondemand-nodepool desired=1,serverclass=gp.vs1.medium-ord
+```
+
 
 ### Get kubeconfig for a cloudspace
 ```bash
 spotctl cloudspaces get-config my-cluster --file ~/.kube/config-my-cluster
 ```
 
-### Create a spot node pool
+### Delete a cloudspace 
 ```bash
-spotctl nodepools spot create \
-  --name my-spot-pool \
-  --cloudspace my-cluster \
-  --server-class gp.vs1.medium-iad \
-  --desired 3 \
-  --bid-price 0.05
+spotctl cloudspaces delete --name <my-cluster>
 ```
-
-## Output Formats
-
-Most commands support multiple output formats. Use the `-o` or `--output` flag:
-
-```bash
-# JSON (default)
-spotctl cloudspaces list -o json
-
-# YAML
-spotctl cloudspaces list -o yaml
-
-# Table (human-readable)
-spotctl cloudspaces list -o table
-```
-
-## Troubleshooting
-
-Enable verbose output for debugging:
-```bash
-spotctl -v=3 cloudspaces list
-```
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ### Organizations
 ```bash
@@ -152,22 +143,6 @@ spot-cli organizations list --output table
 
 # Get organization details
 spot-cli organizations get org-123 --output json
-```
-
-### Cloudspaces
-```bash
-# Create a new cloudspace
-spot-cli cloudspaces create \
-  --name prod-cluster \
-  --org org-123 \
-  --region us-east-iad-1 \
-  --kubernetes-version 1.28
-
-# List cloudspaces in an organization
-spot-cli cloudspaces list --org org-123
-
-# Delete a cloudspace
-spot-cli cloudspaces delete --org org-123 --name staging-cluster
 ```
 
 ### Node Pools
@@ -201,34 +176,6 @@ spot-cli nodepools ondemand create \
 spot-cli nodepools ondemand list --namespace org-123
 ```
 
-### Utilities
-```bash
-# List available regions
-spot-cli regions list --output table
-
-# Show server class details
-spot-cli server-classes list
-
-# Get price history
-spot-cli price-history get --server-class gp.vs1.medium-iad
-```
-
-## Example Workflow
-
-```bash
-# Authenticate
-export SPOT_REFRESH_TOKEN="your_token"
-spot-cli auth
-
-# Create infrastructure
-spot-cli cloudspaces create --name my-cluster --org org-123 --region us-east-iad-1
-spot-cli nodepools spot create --name spot-pool --namespace org-123 --cloudspace my-cluster --server-class gp.vs1.medium-iad --desired 5 --bid-price 0.75
-spot-cli nodepools ondemand create --name ondemand-pool --namespace org-123 --cloudspace my-cluster --server-class mem.vs1.large-iad --desired 2
-
-# Query resources
-spot-cli cloudspaces list --org org-123 --output table
-spot-cli nodepools spot list --namespace org-123 --output json
-```
 
 ## Output Formats
 
@@ -238,20 +185,7 @@ spot-cli nodepools spot list --namespace org-123 --output json
 | Table  | Human-readable table format      | `spot-cli server-classes list --output table`|
 | YAML   | YAML-formatted output            | `spot-cli organizations list --output yaml`  |
 
-## Troubleshooting
 
-Enable verbose logging with `-v` flag:
-```bash
-spot-cli -v cloudspaces list --namespace org-123
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/improvement`)
-3. Commit changes (`git commit -am 'Add new feature'`)
-4. Push to branch (`git push origin feature/improvement`)
-5. Create Pull Request
 
 ## License
 
