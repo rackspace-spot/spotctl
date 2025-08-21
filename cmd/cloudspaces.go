@@ -517,41 +517,102 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 		}
 
+		// Track created resources for cleanup in case of failure
+		type cleanupFunc func() error
+		var cleanupStack []cleanupFunc
+		var createdCloudspace bool
+
+		// Defer cleanup function that will run if we return with an error
+		defer func() {
+			if err == nil || !createdCloudspace {
+				// No error or cloudspace wasn't created, nothing to clean up
+				return
+			}
+
+			// Run cleanup in reverse order (LIFO)
+			for i := len(cleanupStack) - 1; i >= 0; i-- {
+				if cleanupErr := cleanupStack[i](); cleanupErr != nil {
+					// Log but don't fail the cleanup process
+					fmt.Fprintf(os.Stderr, "Warning: cleanup failed: %v\n", cleanupErr)
+				}
+			}
+			// Finally, delete the cloudspace if we created it
+			if createdCloudspace {
+				if delErr := client.GetAPI().DeleteCloudspace(context.Background(), cloudspace.Name, cloudspace.Org); delErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clean up cloudspace: %v\n", delErr)
+				}
+			}
+		}()
+
+		// 1. First, validate all resources
+		for i, pool := range spotnodepools {
+			if pool.ServerClass == "" {
+				return fmt.Errorf("spot nodepool %d: server class is required", i)
+			}
+			if pool.Desired <= 0 {
+				return fmt.Errorf("spot nodepool %d: desired must be greater than 0", i)
+			}
+			if pool.BidPrice == "" {
+				return fmt.Errorf("spot nodepool %d: bid price is required", i)
+			}
+		}
+
+		for i, pool := range ondemandnodepools {
+			if pool.ServerClass == "" {
+				return fmt.Errorf("on-demand nodepool %d: server class is required", i)
+			}
+			if pool.Desired <= 0 {
+				return fmt.Errorf("on-demand nodepool %d: desired must be greater than 0", i)
+			}
+		}
+
+		// 2. Create cloudspace
 		err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
 		if err != nil {
 			if rxtspot.IsForbidden(err) {
 				return fmt.Errorf("forbidden: %w", err)
 			}
 			if rxtspot.IsConflict(err) {
-				return fmt.Errorf("conflict: %w", err)
+				return fmt.Errorf("a cloudspace with this name already exists")
 			}
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
+		createdCloudspace = true
 
-		for _, spotnodepool := range spotnodepools {
-			err = client.GetAPI().CreateSpotNodePool(context.Background(), org, spotnodepool)
+		// 3. Create spot node pools
+		for i, pool := range spotnodepools {
+			err = client.GetAPI().CreateSpotNodePool(context.Background(), org, pool)
 			if err != nil {
-				if rxtspot.IsForbidden(err) {
-					return fmt.Errorf("forbidden: %w", err)
-				}
-				if rxtspot.IsConflict(err) {
-					return fmt.Errorf("conflict: %w", err)
-				}
-				return fmt.Errorf("failed to create spot node pool: %w", err)
+				return fmt.Errorf("failed to create spot nodepool %s: %w", pool.Name, err)
 			}
+			// Add cleanup function for this pool
+			i := i // Capture loop variable
+			cleanupStack = append(cleanupStack, func() error {
+				return client.GetAPI().DeleteSpotNodePool(context.Background(), org, spotnodepools[i].Name)
+			})
+		}
+
+		// 4. Create on-demand node pools
+		for i, pool := range ondemandnodepools {
+			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, pool)
+			if err != nil {
+				return fmt.Errorf("failed to create on-demand nodepool %s: %w", pool.Name, err)
+			}
+			// Add cleanup function for this pool
+			i := i // Capture loop variable
+			cleanupStack = append(cleanupStack, func() error {
+				return client.GetAPI().DeleteOnDemandNodePool(context.Background(), org, ondemandnodepools[i].Name)
+			})
+		}
+
+		// If we got here, everything was created successfully
+		// Clear the cleanup stack to prevent cleanup on success
+		cleanupStack = nil
+
+		for range spotnodepools {
 			fmt.Printf("Spot node pool created successfully\n")
 		}
-		for _, ondemandnodepool := range ondemandnodepools {
-			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, ondemandnodepool)
-			if err != nil {
-				if rxtspot.IsForbidden(err) {
-					return fmt.Errorf("forbidden: %w", err)
-				}
-				if rxtspot.IsConflict(err) {
-					return fmt.Errorf("conflict: %w", err)
-				}
-				return fmt.Errorf("failed to create on-demand node pool: %w", err)
-			}
+		for range ondemandnodepools {
 			fmt.Printf("On-demand node pool created successfully\n")
 		}
 
