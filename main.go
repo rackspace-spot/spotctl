@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/rackspace-spot/spotcli/cmd"
+	"github.com/rackspace-spot/spotctl/cmd"
 	"github.com/spf13/cobra"
 	"k8s.io/klog"
 )

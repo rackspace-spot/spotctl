@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
-	"github.com/rackspace-spot/spotcli/internal"
-	config "github.com/rackspace-spot/spotcli/pkg"
+	"github.com/rackspace-spot/spotctl/internal"
+	config "github.com/rackspace-spot/spotctl/pkg"
 	"github.com/spf13/cobra"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -106,6 +108,55 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 	},
 }
 
+// validateBidPrice validates and formats a bid price string to ensure it has up to 3 decimal places
+func validateBidPrice(bidPrice string) (string, error) {
+	// Check if it's a valid number
+	val, err := strconv.ParseFloat(bidPrice, 64)
+	if err != nil {
+		return "", fmt.Errorf("bid price must be a valid number")
+	}
+
+	// Ensure it's a positive number
+	if val <= 0 {
+		return "", fmt.Errorf("bid price must be greater than 0")
+	}
+
+	// Format to exactly 3 decimal places
+	formatted := fmt.Sprintf("%.3f", val)
+
+	// Remove trailing zeros after decimal point for cleaner output
+	formatted = strings.TrimRight(formatted, "0")
+	formatted = strings.TrimSuffix(formatted, ".")
+
+	// Ensure we have at least one decimal place if it was a whole number
+	if !strings.Contains(formatted, ".") && val == float64(int64(val)) {
+		formatted = fmt.Sprintf("%s.000", formatted)
+	} else if strings.Count(formatted, ".") > 0 {
+		// Ensure exactly 3 decimal places
+		parts := strings.Split(formatted, ".")
+		if len(parts) == 2 && len(parts[1]) < 3 {
+			formatted = fmt.Sprintf("%s%s", formatted, strings.Repeat("0", 3-len(parts[1])))
+		}
+	}
+
+	return formatted, nil
+}
+
+// parseNodepoolParams parses nodepool parameters in format key1=value1,key2=value2
+func parseNodepoolParams(params string) (map[string]string, error) {
+	result := make(map[string]string)
+	pairs := strings.Split(params, ",")
+
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value", pair)
+		}
+		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+	}
+	return result, nil
+}
+
 // cloudspacesCreateCmd represents the cloudspaces create command
 var cloudspacesCreateCmd = &cobra.Command{
 	Use:   "create",
@@ -142,8 +193,8 @@ var cloudspacesCreateCmd = &cobra.Command{
 			return fmt.Errorf("either --config must be provided OR --name must be set")
 		}
 
-		spotNodePoolJSON, _ := cmd.Flags().GetStringArray("spot_nodepool")
-		onDemandNodePoolJSON, _ := cmd.Flags().GetStringArray("ondemand_nodepool")
+		spotNodePoolJSON, _ := cmd.Flags().GetStringArray("spot-nodepool")
+		onDemandNodePoolJSON, _ := cmd.Flags().GetStringArray("ondemand-nodepool")
 		kubernetesVersion, _ := cmd.Flags().GetString("kubernetes_version")
 		cni, _ := cmd.Flags().GetString("cni")
 
@@ -221,42 +272,220 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Cni:               cni,
 			}
 
-			for _, poolJSON := range spotNodePoolJSON {
-				var pool rxtspot.SpotNodePool
+			for _, poolStr := range spotNodePoolJSON {
+				// Check if it's a JSON string (backward compatibility)
+				if strings.TrimSpace(poolStr)[0] == '{' {
+					// First, unmarshal into a map to handle type conversion
+					var rawPool map[string]interface{}
+					if err := json.Unmarshal([]byte(poolStr), &rawPool); err != nil {
+						return fmt.Errorf("failed to parse spotnodepool JSON: %w", err)
+					}
 
-				// Unmarshal the JSON string into the struct
-				if err := json.Unmarshal([]byte(poolJSON), &pool); err != nil {
-					return fmt.Errorf("failed to parse spotnodepool JSON: %w", err)
+					// Create a new SpotNodePool and populate it
+					pool := rxtspot.SpotNodePool{
+						Org:        org,
+						Cloudspace: cloudspace.Name,
+					}
+
+					// Handle each field with proper type conversion
+					for key, value := range rawPool {
+						switch strings.ToLower(key) {
+						case "name":
+							if strVal, ok := value.(string); ok {
+								pool.Name = strVal
+							}
+						case "serverclass":
+							if strVal, ok := value.(string); ok {
+								pool.ServerClass = strVal
+							}
+						case "desired":
+							switch v := value.(type) {
+							case float64:
+								pool.Desired = int(v)
+							case string:
+								if intVal, err := strconv.Atoi(v); err == nil {
+									pool.Desired = intVal
+								}
+							}
+						case "bidprice":
+							switch v := value.(type) {
+							case string:
+								if formatted, err := validateBidPrice(v); err == nil {
+									pool.BidPrice = formatted
+								}
+							case float64:
+								pool.BidPrice = fmt.Sprintf("%.3f", v)
+								// Ensure it has exactly 3 decimal places
+								if !strings.Contains(pool.BidPrice, ".") {
+									pool.BidPrice += ".000"
+								} else {
+									parts := strings.Split(pool.BidPrice, ".")
+									if len(parts) == 2 && len(parts[1]) < 3 {
+										pool.BidPrice += strings.Repeat("0", 3-len(parts[1]))
+									}
+								}
+							}
+						}
+					}
+
+					// Set defaults if not provided
+					if pool.ServerClass == "" {
+						pool.ServerClass = defaultServerclass
+					}
+					if pool.Desired == 0 {
+						pool.Desired = 1
+					}
+
+					spotnodepools = append(spotnodepools, pool)
+					continue
 				}
 
-				// 🔹 Set defaults if missing
-				if pool.Org == "" {
-					pool.Org = org
+				// Parse key=value parameters
+				pool := rxtspot.SpotNodePool{
+					Org:        org,
+					Cloudspace: cloudspace.Name,
 				}
-				if pool.Cloudspace == "" {
-					pool.Cloudspace = cloudspace.Name
+
+				// Parse key=value parameters
+				params, err := parseNodepoolParams(poolStr)
+				if err != nil {
+					return fmt.Errorf("failed to parse spotnodepool parameters: %w", err)
+				}
+
+				// Apply parameters to the pool
+				for key, value := range params {
+					switch strings.ToLower(key) {
+					case "name":
+						pool.Name = value
+					case "serverclass":
+						pool.ServerClass = value
+					case "desired":
+						desired, err := strconv.Atoi(value)
+						if err != nil {
+							return fmt.Errorf("invalid desired value '%s': %w", value, err)
+						}
+						pool.Desired = desired
+					case "bidprice":
+						formattedBidPrice, err := validateBidPrice(value)
+						if err != nil {
+							return fmt.Errorf("invalid bid price '%s': %w", value, err)
+						}
+						pool.BidPrice = formattedBidPrice
+					default:
+						return fmt.Errorf("unknown nodepool parameter: %s", key)
+					}
+				}
+
+				// Set defaults if not provided
+				if pool.ServerClass == "" {
+					pool.ServerClass = defaultServerclass
+				}
+				if pool.Desired == 0 {
+					pool.Desired = 1
+				}
+				if pool.Name == "" {
+					pool.Name = fmt.Sprintf("spot-pool-%d", len(spotnodepools)+1)
 				}
 
 				spotnodepools = append(spotnodepools, pool)
 			}
 
-			for _, poolJSON := range onDemandNodePoolJSON {
-				var pool rxtspot.OnDemandNodePool
-				if err := json.Unmarshal([]byte(poolJSON), &pool); err != nil {
-					return fmt.Errorf("failed to parse ondemandnodepool JSON: %w", err)
+			for _, poolStr := range onDemandNodePoolJSON {
+				// Check if it's a JSON string (backward compatibility)
+				if strings.TrimSpace(poolStr)[0] == '{' {
+					// First, unmarshal into a map to handle type conversion
+					var rawPool map[string]interface{}
+					if err := json.Unmarshal([]byte(poolStr), &rawPool); err != nil {
+						return fmt.Errorf("failed to parse ondemandnodepool JSON: %w", err)
+					}
+
+					// Create a new OnDemandNodePool and populate it
+					pool := rxtspot.OnDemandNodePool{
+						Org:        org,
+						Cloudspace: cloudspace.Name,
+					}
+
+					// Handle each field with proper type conversion
+					for key, value := range rawPool {
+						switch strings.ToLower(key) {
+						case "name":
+							if strVal, ok := value.(string); ok {
+								pool.Name = strVal
+							}
+						case "serverclass":
+							if strVal, ok := value.(string); ok {
+								pool.ServerClass = strVal
+							}
+						case "desired":
+							switch v := value.(type) {
+							case float64:
+								pool.Desired = int(v)
+							case string:
+								if intVal, err := strconv.Atoi(v); err == nil {
+									pool.Desired = intVal
+								}
+							}
+						}
+					}
+
+					// Set defaults if not provided
+					if pool.ServerClass == "" {
+						pool.ServerClass = defaultServerclass
+					}
+					if pool.Desired == 0 {
+						pool.Desired = 1
+					}
+					if pool.Name == "" {
+						pool.Name = fmt.Sprintf("ondemand-pool-%d", len(ondemandnodepools)+1)
+					}
+
+					ondemandnodepools = append(ondemandnodepools, pool)
+					continue
 				}
-				// 🔹 Set defaults if missing
-				if pool.Org == "" {
-					pool.Org = org
+
+				// Parse key=value parameters
+				pool := rxtspot.OnDemandNodePool{
+					Org:        org,
+					Cloudspace: cloudspace.Name,
 				}
-				if pool.Cloudspace == "" {
-					pool.Cloudspace = cloudspace.Name
+
+				// Parse key=value parameters
+				params, err := parseNodepoolParams(poolStr)
+				if err != nil {
+					return fmt.Errorf("failed to parse ondemandnodepool parameters: %w", err)
+				}
+
+				// Apply parameters to the pool
+				for key, value := range params {
+					switch strings.ToLower(key) {
+					case "name":
+						pool.Name = value
+					case "serverclass":
+						pool.ServerClass = value
+					case "desired":
+						desired, err := strconv.Atoi(value)
+						if err != nil {
+							return fmt.Errorf("invalid desired value '%s': %w", value, err)
+						}
+						pool.Desired = desired
+					}
+				}
+
+				// Set defaults if not provided
+				if pool.ServerClass == "" {
+					pool.ServerClass = defaultServerclass
+				}
+				if pool.Desired == 0 {
+					pool.Desired = 1
+				}
+				if pool.Name == "" {
+					pool.Name = fmt.Sprintf("ondemand-pool-%d", len(ondemandnodepools)+1)
 				}
 
 				ondemandnodepools = append(ondemandnodepools, pool)
 			}
 			if len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 && configPath == "" {
-				price, err := client.GetAPI().GetMinimumBidPriceForServerClass(context.Background(), "gp.vs1.medium-iad")
+				price, err := client.GetAPI().GetMinimumBidPriceForServerClass(context.Background(), defaultServerclass)
 				if err != nil {
 					price = "0.05"
 				}
@@ -463,8 +692,8 @@ func init() {
 	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
 	cloudspacesCreateCmd.Flags().StringP("kubernetes_version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
 
-	cloudspacesCreateCmd.Flags().StringArray("spot_nodepool", []string{}, "Spot nodepool details as JSON string")
-	cloudspacesCreateCmd.Flags().StringArray("ondemand_nodepool", []string{}, "Ondemand nodepool details as JSON string")
+	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, "Spot nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)")
+	cloudspacesCreateCmd.Flags().StringArray("ondemand-nodepool", []string{}, "Ondemand nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord)")
 	cloudspacesCreateCmd.Flags().String("config", "", "Path to config file (YAML or JSON)")
 	cloudspacesCreateCmd.Flags().StringP("cni", "", "calico", "CNI (default: calico)")
 

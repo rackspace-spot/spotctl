@@ -1,4 +1,4 @@
-module github.com/rackspace-spot/spotcli
+module github.com/rackspace-spot/spotctl
 
 go 1.23.5
 

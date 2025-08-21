@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
-	"github.com/rackspace-spot/spotcli/internal"
-	config "github.com/rackspace-spot/spotcli/pkg"
+	"github.com/rackspace-spot/spotctl/internal"
+	config "github.com/rackspace-spot/spotctl/pkg"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	config "github.com/rackspace-spot/spotcli/pkg"
+	config "github.com/rackspace-spot/spotctl/pkg"
 
 	"github.com/spf13/cobra"
 	"k8s.io/klog"

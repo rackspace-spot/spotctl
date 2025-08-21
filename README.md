@@ -1,6 +1,6 @@
-# Rackspace Spot CLI
+# Rackspace Spot CLI (spotctl)
 
-A command-line interface for managing Rackspace Spot resources with full CRUD operations for all resource types.
+A command-line interface for managing Rackspace Spot resources with full CRUD operations for all resource types including cloudspaces, node pools, organizations, and more.
 
 ## Features
 
@@ -9,44 +9,141 @@ A command-line interface for managing Rackspace Spot resources with full CRUD op
 - OAuth2 authentication
 - Interactive command structure
 - Cross-platform support
+- Easy configuration management
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.23.5 or later
+- Go 1.16 or later
 - Rackspace Spot API credentials
 
-### Build from Source
+### Option 1: Install using Go
 
 ```bash
-git clone https://github.com/rackspace-spot/spot-sdk.git
-cd spot-sdk/spot-cli
-go build -o spot-cli
+# Install the latest version
+go install github.com/rackspace-spot/spotctl@latest
+
+# Verify installation
+spotctl --version
 ```
 
-### Install Globally
+### Option 2: Build from Source
 
 ```bash
-go install github.com/rackerlabs/spot-cli@latest
+# Clone the repository
+git clone https://github.com/rackspace-spot/spotctl.git
+cd spotctl
+
+# Build the binary
+go build -o spotctl
+
+# Move to a directory in your PATH
+sudo mv spotctl /usr/local/bin/
+
+# Verify installation
+spotctl --help
 ```
 
 ## Configuration
 
-```bash
-# Set refresh token
-export SPOT_REFRESH_TOKEN="your_refresh_token"
+Before using spotctl, you need to configure your credentials:
 
-# Verify authentication
-spot-cli auth
+```bash
+# Run the interactive configuration wizard
+spotctl configure
+
+# Or set environment variables manually
+export SPOT_ORG_ID="your_organization_id"
+export SPOT_API_TOKEN="your_api_token"
+export SPOT_REGION="your_preferred_region"  # Optional
 ```
 
-## Command Reference
+## Available Commands
 
 ### Authentication
+- `spotctl auth` - Authenticate with Rackspace Spot
+
+### Cloudspaces (Kubernetes Clusters)
+- `spotctl cloudspaces list` - List all cloudspaces
+- `spotctl cloudspaces get <name>` - Get details of a specific cloudspace
+- `spotctl cloudspaces create` - Create a new cloudspace
+- `spotctl cloudspaces delete <name>` - Delete a cloudspace
+- `spotctl cloudspaces get-config <name>` - Get kubeconfig for a cloudspace
+
+### Node Pools
+- `spotctl nodepools spot list` - List spot node pools
+- `spotctl nodepools spot create` - Create a spot node pool
+- `spotctl nodepools ondemand list` - List on-demand node pools
+- `spotctl nodepools ondemand create` - Create an on-demand node pool
+
+### Server Classes
+- `spotctl serverclasses list` - List available server classes
+- `spotctl serverclasses get <name>` - Get details of a server class
+
+### Regions
+- `spotctl regions list` - List available regions
+- `spotctl regions get <name>` - Get details of a region
+
+### Organizations
+- `spotctl organizations list` - List organizations
+- `spotctl organizations get <id>` - Get organization details
+
+### Pricing
+- `spotctl pricing get` - Get pricing information
+
+## Usage Examples
+
+### List all cloudspaces
 ```bash
-spot-cli auth
+spotctl cloudspaces list
 ```
+
+### Create a new cloudspace
+```bash
+spotctl cloudspaces create --name my-cluster --region us-east-1
+```
+
+### Get kubeconfig for a cloudspace
+```bash
+spotctl cloudspaces get-config my-cluster --file ~/.kube/config-my-cluster
+```
+
+### Create a spot node pool
+```bash
+spotctl nodepools spot create \
+  --name my-spot-pool \
+  --cloudspace my-cluster \
+  --server-class gp.vs1.medium-iad \
+  --desired 3 \
+  --bid-price 0.05
+```
+
+## Output Formats
+
+Most commands support multiple output formats. Use the `-o` or `--output` flag:
+
+```bash
+# JSON (default)
+spotctl cloudspaces list -o json
+
+# YAML
+spotctl cloudspaces list -o yaml
+
+# Table (human-readable)
+spotctl cloudspaces list -o table
+```
+
+## Troubleshooting
+
+Enable verbose output for debugging:
+```bash
+spotctl -v=3 cloudspaces list
+```
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ### Organizations
 ```bash
