@@ -13,7 +13,6 @@ import (
 
 var (
 	outputFormat string
-	verbose      bool // Global verbose flag
 	verbosity    int
 )
 
@@ -92,7 +91,6 @@ func init() {
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "json", "Output format (json, table, yaml)")
-	// rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output") // Global verbose flag
 }
 
 func initLoggingFlags(verbosity int) {

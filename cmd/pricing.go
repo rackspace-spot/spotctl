@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/rackspace-spot/spotcli/internal"
+	config "github.com/rackspace-spot/spotcli/pkg"
 	"github.com/spf13/cobra"
 )
 
@@ -19,10 +20,13 @@ var pricingGetCmd = &cobra.Command{
 	Short: "Get pricing",
 	Long:  `Get a specific pricing.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return err
+		}
 		serverclass, _ := cmd.Flags().GetString("serverclass")
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}

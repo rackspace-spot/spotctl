@@ -23,16 +23,17 @@ var cloudspacesCmd = &cobra.Command{
 	Long:  `Manage Rackspace Spot cloudspaces (Kubernetes clusters).`,
 }
 
+const defaultServerclass = "gp.vs1.medium-iad"
+
 // cloudspacesListCmd represents the cloudspaces list command
 var cloudspacesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List cloudspaces",
 	Long:  `List all cloudspaces in an organization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-
+		cfg, err := config.GetCLIEssentials(cmd)
 		org, _ := cmd.Flags().GetString("org")
 		if org == "" {
-			cfg, err := config.LoadConfig()
 			if err == nil && cfg.Org != "" {
 				org = cfg.Org
 			}
@@ -41,7 +42,7 @@ var cloudspacesListCmd = &cobra.Command{
 			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -61,14 +62,14 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 	Long:  `Get config for a specific cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 
+		cfg, err := config.GetCLIEssentials(cmd)
+
 		org, _ := cmd.Flags().GetString("org")
 		if org == "" {
-			cfg, err := config.LoadConfig()
 			if err == nil && cfg.Org != "" {
 				org = cfg.Org
 			}
 		}
-
 		if org == "" {
 			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
@@ -77,6 +78,7 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 		if name == "" {
 			return fmt.Errorf("name is required")
 		}
+
 		var filePath string
 		fileName, _ := cmd.Flags().GetString("file")
 		if fileName == "" {
@@ -84,7 +86,8 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 		} else {
 			filePath = fileName + "/" + name + ".yaml"
 		}
-		client, err := internal.NewClient()
+
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -109,15 +112,30 @@ var cloudspacesCreateCmd = &cobra.Command{
 	Short: "Create a cloudspace",
 	Long:  `Create a new cloudspace (Kubernetes cluster).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.GetCLIEssentials(cmd)
+
 		name, _ := cmd.Flags().GetString("name")
-		org, err := config.GetOrg(cmd)
-		if err != nil {
-			return err
+		org, _ := cmd.Flags().GetString("org")
+		region, _ := cmd.Flags().GetString("region")
+
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
 		}
-		region, err := config.GetRegion(cmd)
-		if err != nil {
-			return err
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
+
+		if region == "" {
+			if err == nil && cfg.Region != "" {
+				region = cfg.Region
+			}
+		}
+		if region == "" {
+			return fmt.Errorf("region not specified (use --region or run 'spotcli configure')")
+		}
+
 		configPath, _ := cmd.Flags().GetString("config")
 
 		if configPath != "" && name != "" {
@@ -132,7 +150,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 		var cloudspace *rxtspot.CloudSpace
 		var spotnodepool *rxtspot.SpotNodePool
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -238,15 +256,19 @@ var cloudspacesCreateCmd = &cobra.Command{
 				ondemandnodepools = append(ondemandnodepools, pool)
 			}
 			if len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 && configPath == "" {
+				price, err := client.GetAPI().GetMinimumBidPriceForServerClass(context.Background(), "gp.vs1.medium-iad")
+				if err != nil {
+					price = "0.05"
+				}
+				price = strings.TrimPrefix(price, "$")
 				spotnodepool = &rxtspot.SpotNodePool{
 					Org:         cloudspace.Org,
 					Cloudspace:  cloudspace.Name,
-					ServerClass: "gp.vs1.medium-iad", // default choice
+					ServerClass: defaultServerclass, // default choice
 					Desired:     1,
-					BidPrice:    "0.08", // match struct type
+					BidPrice:    price, // match struct type
 				}
 
-				//fmt.Println("⚠️  NOTE: No spotnodepool/ondemandpool configurations are specified.")
 				color.Yellow("⚠️  NOTE: No spotnodepool/ondemandpool configurations are specified.")
 				color.Yellow("⚙️  Default Spot Node Pool will be created with:")
 				color.Yellow("• Server Class  : %s\n", spotnodepool.ServerClass)
@@ -265,21 +287,16 @@ var cloudspacesCreateCmd = &cobra.Command{
 			}
 
 		}
-		//	fmt.Printf("cloudspace - %+v \n", cloudspace)
-		//	fmt.Printf("spotnodepools - %+v \n", spotnodepools)
-		//	fmt.Printf("ondemandnodepools - %+v \n", ondemandnodepools)
 
-		if cloudspace != nil {
-			err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
-			if err != nil {
-				if rxtspot.IsForbidden(err) {
-					return fmt.Errorf("forbidden: %w", err)
-				}
-				if rxtspot.IsConflict(err) {
-					return fmt.Errorf("conflict: %w", err)
-				}
-				return fmt.Errorf("failed to create cloudspace: %w", err)
+		err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
+		if err != nil {
+			if rxtspot.IsForbidden(err) {
+				return fmt.Errorf("forbidden: %w", err)
 			}
+			if rxtspot.IsConflict(err) {
+				return fmt.Errorf("conflict: %w", err)
+			}
+			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
 
 		for _, spotnodepool := range spotnodepools {
@@ -325,16 +342,27 @@ var cloudspacesGetCmd = &cobra.Command{
 	Short: "Get cloudspace details",
 	Long:  `Get details for a specific cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return err
+		}
 
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
 			return fmt.Errorf("name is required")
 		}
-		org, err := config.GetOrg(cmd)
-		if err != nil {
-			return err
+
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
 		}
-		client, err := internal.NewClient()
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		}
+
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return err
 		}
@@ -367,9 +395,18 @@ var cloudspacesDeleteCmd = &cobra.Command{
 		if name == "" {
 			return fmt.Errorf("name is required")
 		}
-		org, err := config.GetOrg(cmd)
+		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
+		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
 		if !yes {
@@ -384,7 +421,7 @@ var cloudspacesDeleteCmd = &cobra.Command{
 				return nil
 			}
 		}
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}

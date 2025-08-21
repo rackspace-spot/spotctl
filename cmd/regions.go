@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/rackspace-spot/spotcli/internal"
+	config "github.com/rackspace-spot/spotcli/pkg"
 	"github.com/spf13/cobra"
 )
 
@@ -19,8 +20,11 @@ var regionsListCmd = &cobra.Command{
 	Short: "List regions",
 	Long:  `List all regions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-
-		client, err := internal.NewClient()
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return err
+		}
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -42,7 +46,11 @@ var regionsGetCmd = &cobra.Command{
 		if name == "" {
 			return fmt.Errorf("name is required")
 		}
-		client, err := internal.NewClient()
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return err
+		}
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}

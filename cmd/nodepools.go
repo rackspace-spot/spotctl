@@ -42,12 +42,21 @@ var spotListCmd = &cobra.Command{
 		if cloudspace == "" {
 			return fmt.Errorf("cloudspace is required")
 		}
-		org, err := config.GetOrg(cmd)
+		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
 		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		}
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -68,9 +77,18 @@ var spotCreateCmd = &cobra.Command{
 	Long:  `Create a new spot node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, err := config.GetOrg(cmd)
+		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
+		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		serverClass, _ := cmd.Flags().GetString("server-class")
@@ -86,7 +104,7 @@ var spotCreateCmd = &cobra.Command{
 			return fmt.Errorf("desired must be a valid integer: %w", err)
 		}
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -114,9 +132,18 @@ var ondemandListCmd = &cobra.Command{
 	Short: "List on-demand node pools",
 	Long:  `List all on-demand node pools in a org.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		org, err := config.GetOrg(cmd)
+		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
+		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 
@@ -124,7 +151,7 @@ var ondemandListCmd = &cobra.Command{
 			return fmt.Errorf("org and cloudspace are required")
 		}
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -145,9 +172,18 @@ var ondemandCreateCmd = &cobra.Command{
 	Long:  `Create a new on-demand node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		org, err := config.GetOrg(cmd)
+		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
+		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
 		}
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		serverClass, _ := cmd.Flags().GetString("server-class")
@@ -162,7 +198,7 @@ var ondemandCreateCmd = &cobra.Command{
 			return fmt.Errorf("desired must be a valid integer: %w", err)
 		}
 
-		client, err := internal.NewClient()
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}

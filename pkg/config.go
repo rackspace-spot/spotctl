@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
 type SpotConfig struct {
-	Org    string `yaml:"org"`
-	Token  string `yaml:"token"`
-	Region string `yaml:"region"`
+	Org          string `yaml:"org"`
+	RefreshToken string `yaml:"refresh_token"`
+	AccessToken  string `yaml:"access_token"`
+	Region       string `yaml:"region"`
 }
 
 // GetConfigPath returns the ~/.spot_config path
@@ -27,11 +29,14 @@ func GetConfigPath() (string, error) {
 func LoadConfig() (*SpotConfig, error) {
 	path, err := GetConfigPath()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("spot config not found, run 'spotcli configure' to configure your default orgID, token, and region")
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if strings.Contains(err.Error(), "no such file or directory") {
+			return nil, fmt.Errorf("spot config not found, run 'spotcli configure' to configure your default orgID, token, and region")
+		}
 		return nil, err
 	}
 
@@ -56,32 +61,10 @@ func SaveConfig(cfg *SpotConfig) error {
 	return os.WriteFile(path, data, 0600) // 600 = rw-------
 }
 
-func GetOrg(cmd *cobra.Command) (string, error) {
-
-	org, _ := cmd.Flags().GetString("org")
-	if org == "" {
-		cfg, err := LoadConfig()
-		if err == nil && cfg.Org != "" {
-			org = cfg.Org
-		}
+func GetCLIEssentials(cmd *cobra.Command) (*SpotConfig, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
 	}
-	if org == "" {
-		return "", fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
-	}
-	return org, nil
-}
-
-func GetRegion(cmd *cobra.Command) (string, error) {
-
-	region, _ := cmd.Flags().GetString("region")
-	if region == "" {
-		cfg, err := LoadConfig()
-		if err == nil && cfg.Region != "" {
-			region = cfg.Region
-		}
-	}
-	if region == "" {
-		return "", fmt.Errorf("region not specified (use --region or run 'spotcli configure')")
-	}
-	return region, nil
+	return cfg, nil
 }
