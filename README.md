@@ -125,7 +125,6 @@ spotctl cloudspaces create \
   --ondemand-nodepool desired=1,serverclass=gp.vs1.medium-ord
 ```
 
-
 ### Get kubeconfig for a cloudspace
 ```bash
 spotctl cloudspaces get-config my-cluster --file ~/.kube/config-my-cluster
@@ -175,6 +174,46 @@ spot-cli nodepools ondemand create \
 # List on-demand pools
 spot-cli nodepools ondemand list --namespace org-123
 ```
+
+#### Some commands examples 
+
+```bash
+./spotcli cloudspaces create \
+  --name rgosavi-cli-test-205 \
+  --region us-central-ord-1 \
+  --org hooli \
+  --spot-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0412,serverclass=gp.vs1.medium-ord,desired=2,bidprice=0.09"
+
+./spotcli cloudspaces create \
+  --name rgosavi-cli-test-157 \
+  --region us-central-ord-1 \
+  --org hooli \
+  --ondemand-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0411,serverclass=gp.vs1.medium-ord,desired=2"
+
+
+./spotcli nodepools spot create --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace rgosavi-cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord --bidprice 0.08
+
+./spotcli nodepools spot update --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace rgosavi-cli-test-153 --desired 2 --bidprice 0.08
+
+./spotcli nodepools spot delete --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 
+
+./spotcli nodepools spot get --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 
+
+
+Ondemand Nodepool Operations
+
+./spotcli nodepools ondemand list --cloudspace rgosavi-cli-test-153
+
+./spotcli nodepools ondemand get --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
+
+./spotcli nodepools ondemand update --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace rgosavi-cli-test-153 --desired 2
+
+./spotcli nodepools ondemand create --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace rgosavi-cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord
+
+./spotcli nodepools ondemand delete --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
+
+```
+
 
 
 ## Output Formats
