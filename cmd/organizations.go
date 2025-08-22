@@ -28,12 +28,12 @@ var organizationsListCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		orgs, err := client.GetAPI().ListOrganizations(context.Background())
 		if err != nil {
-			return fmt.Errorf("failed to list organizations: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		return internal.OutputData(orgs, outputFormat)
@@ -53,13 +53,13 @@ var organizationsGetCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		org := args[0]
 		orgs, err := client.GetAPI().ListOrganizations(context.Background())
 		if err != nil {
-			return fmt.Errorf("failed to list organizations: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		// Find the organization with the matching org

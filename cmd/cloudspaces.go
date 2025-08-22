@@ -46,12 +46,12 @@ var cloudspacesListCmd = &cobra.Command{
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		cloudspaces, err := client.GetAPI().ListCloudspaces(context.Background(), org)
 		if err != nil {
-			return fmt.Errorf("failed to list cloudspaces: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		return internal.OutputData(cloudspaces, outputFormat)
@@ -91,11 +91,11 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		k8sConfig, err := client.GetAPI().GetCloudspaceConfig(context.Background(), org, name)
 		if err != nil {
-			return fmt.Errorf("failed to get kubernetes config: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		err = os.WriteFile(filePath, []byte(k8sConfig), 0644)
@@ -575,7 +575,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			if rxtspot.IsConflict(err) {
 				return fmt.Errorf("a cloudspace with this name already exists")
 			}
-			return fmt.Errorf("failed to create cloudspace: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		createdCloudspace = true
 
@@ -618,7 +618,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 		cloudspace, err = client.GetAPI().GetCloudspace(context.Background(), org, cloudspace.Name)
 		if err != nil {
-			return fmt.Errorf("failed to get cloudspace: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		fmt.Printf("Cloudspace '%s' created successfully\n", cloudspace.Name)
 
@@ -668,7 +668,7 @@ var cloudspacesGetCmd = &cobra.Command{
 			if rxtspot.IsConflict(err) {
 				return fmt.Errorf("conflict: %w", err)
 			}
-			return err
+			return fmt.Errorf("%w", err)
 		}
 
 		return internal.OutputData(cloudspace, outputFormat)
@@ -727,7 +727,7 @@ var cloudspacesDeleteCmd = &cobra.Command{
 			if rxtspot.IsConflict(err) {
 				return fmt.Errorf("conflict: %w", err)
 			}
-			return fmt.Errorf("failed to delete cloudspace: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		fmt.Printf("Cloudspace '%s' deleted successfully\n", name)

@@ -26,12 +26,12 @@ var regionsListCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		regions, err := client.GetAPI().ListRegions(context.Background())
 		if err != nil {
-			return fmt.Errorf("failed to list regions: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		return internal.OutputData(regions, outputFormat)
 	},
@@ -52,12 +52,12 @@ var regionsGetCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		regions, err := client.GetAPI().GetRegion(context.Background(), name)
 		if err != nil {
-			return fmt.Errorf("failed to list regions: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		return internal.OutputData(regions, outputFormat)
 	},

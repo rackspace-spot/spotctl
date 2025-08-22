@@ -33,11 +33,11 @@ var configureCmd = &cobra.Command{
 
 		client, err := internal.NewClientWithTokens(refreshToken, "")
 		if err != nil {
-			return fmt.Errorf("failed to save configuration: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		access_token, err := client.Authenticate(context.Background())
 		if err != nil {
-			return fmt.Errorf("failed to save configuration: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		cfg := &config.SpotConfig{
 			Org:          orgID,

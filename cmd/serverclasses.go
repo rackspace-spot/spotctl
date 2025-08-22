@@ -27,13 +27,13 @@ var serverclassesListCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		region, _ := cmd.Flags().GetString("region")
 
 		serverclasses, err := client.GetAPI().ListServerClasses(context.Background(), region)
 		if err != nil {
-			return fmt.Errorf("failed to list serverclasses: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		return internal.OutputData(serverclasses, outputFormat)
@@ -53,12 +53,12 @@ var serverclassesGetCmd = &cobra.Command{
 		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		serverclasses, err := client.GetAPI().GetServerClass(context.Background(), name)
 		if err != nil {
-			return fmt.Errorf("failed to list serverclasses: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		return internal.OutputData(serverclasses, outputFormat)
 	},

@@ -28,12 +28,12 @@ var pricingGetCmd = &cobra.Command{
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 
 		pricing, err := client.GetAPI().GetMarketPriceForServerClass(context.Background(), serverclass)
 		if err != nil {
-			return fmt.Errorf("failed to get pricing: %w", err)
+			return fmt.Errorf("%w", err)
 		}
 		return internal.OutputData(pricing, outputFormat)
 	},
