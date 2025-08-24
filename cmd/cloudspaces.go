@@ -8,17 +8,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
+	"time"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotctl/internal"
 	config "github.com/rackspace-spot/spotctl/pkg"
 	"github.com/spf13/cobra"
 
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
+	"k8s.io/klog/v2"
+	// "sigs.k8s.io/yaml"
 )
 
 // cloudspacesCmd represents the cloudspaces command
@@ -147,6 +149,9 @@ func validateBidPrice(bidPrice string) (string, error) {
 
 // parseNodepoolParams parses nodepool parameters in format key1=value1,key2=value2
 func parseNodepoolParams(params string) (map[string]string, error) {
+	if params == "" {
+		return nil, nil
+	}
 	result := make(map[string]string)
 	pairs := strings.Split(params, ",")
 
@@ -160,701 +165,649 @@ func parseNodepoolParams(params string) (map[string]string, error) {
 	return result, nil
 }
 
+// createCloudspaceParams holds all parameters needed for cloudspace creation
+type createCloudspaceParams struct {
+	Name              string                     `json:"name" yaml:"name"`
+	Org               string                     `json:"org" yaml:"org"`
+	Region            string                     `json:"region" yaml:"region"`
+	KubernetesVersion string                     `json:"kubernetesVersion" yaml:"kubernetesVersion"`
+	CNI               string                     `json:"cni" yaml:"cni"`
+	ConfigPath        string                     `json:"-" yaml:"-"`
+	SpotNodePools     []rxtspot.SpotNodePool     `json:"spotNodePools,omitempty" yaml:"spotNodePools,omitempty"`
+	OnDemandNodePools []rxtspot.OnDemandNodePool `json:"onDemandNodePools,omitempty" yaml:"onDemandNodePools,omitempty"`
+}
+
+// getBidPrice parses and validates the minimum bid price
+// It returns the price as a string with proper formatting
+func getBidPrice(priceStr string) (string, error) {
+	if priceStr == "" {
+		return "", fmt.Errorf("empty price")
+	}
+
+	// Remove all whitespace and dollar signs
+	trimmed := strings.TrimSpace(strings.ReplaceAll(priceStr, "$", ""))
+	if trimmed == "" {
+		return "", fmt.Errorf("no valid price found in: %q", priceStr)
+	}
+
+	// Parse the price as a float64
+	price, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		// Try to clean up the string and parse again
+		var cleanNum strings.Builder
+		decimalFound := false
+		for _, c := range trimmed {
+			if c >= '0' && c <= '9' {
+				cleanNum.WriteRune(c)
+			} else if c == '.' && !decimalFound {
+				cleanNum.WriteRune(c)
+				decimalFound = true
+			}
+		}
+
+		if cleanNum.Len() == 0 {
+			return "", fmt.Errorf("invalid price format: %q (no valid numbers found)", priceStr)
+		}
+
+		price, err = strconv.ParseFloat(cleanNum.String(), 64)
+		if err != nil {
+			return "", fmt.Errorf("invalid price format: %q: %v", priceStr, err)
+		}
+	}
+
+	if price <= 0 {
+		return "", fmt.Errorf("price must be greater than 0")
+	}
+
+	// Format with up to 3 decimal places
+	return fmt.Sprintf("%g", price), nil
+}
+
+// collectInteractiveInput gathers all required parameters interactively
+func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*createCloudspaceParams, error) {
+	params := &createCloudspaceParams{}
+	var err error
+
+	fmt.Println("\nStarting interactive cloudspace creation...")
+
+	// Region selection
+	fmt.Println("\nFetching available regions...")
+	defaultRegion := ""
+	if cfg != nil && cfg.Region != "" {
+		defaultRegion = cfg.Region
+	}
+
+	params.Region, err = client.PromptForRegionWithDefault(context.Background(), defaultRegion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select region: %w", err)
+	}
+	fmt.Printf("\nSelected region: %s\n", color.GreenString(params.Region))
+
+	// Cloudspace name
+	namePrompt := &survey.Input{
+		Message: "Enter a name for your cloudspace:",
+	}
+	if err := survey.AskOne(namePrompt, &params.Name); err != nil || params.Name == "" {
+		return nil, fmt.Errorf("failed to get cloudspace name: %w", err)
+	}
+
+	// Kubernetes version selection
+	fmt.Println("\nSelect Kubernetes version:")
+	params.KubernetesVersion, err = client.PromptForKubernetesVersion("1.31.1")
+	if err != nil {
+		return nil, fmt.Errorf("failed to select Kubernetes version: %w", err)
+	}
+
+	// CNI selection
+	fmt.Println("\nSelect CNI plugin:")
+	params.CNI, err = client.PromptForCNI("calico")
+	if err != nil {
+		return nil, fmt.Errorf("failed to select CNI: %w", err)
+	}
+
+	// Node pool configuration
+	var nodePools []map[string]interface{}
+
+	for {
+		// Ask for node pool type
+		poolType := ""
+		poolPrompt := &survey.Select{
+			Message: "Add a node pool:",
+			Options: []string{"Spot", "On-Demand"},
+		}
+		if err := survey.AskOne(poolPrompt, &poolType); err != nil {
+			return nil, fmt.Errorf("failed to select node pool type: %w", err)
+		}
+
+		// Get server class
+		serverClass, minBidPrice, onDemandPrice, err := client.PromptForServerClassWithBidPrice(context.Background(), params.Region, strings.ToLower(poolType))
+		if err != nil {
+			return nil, fmt.Errorf("failed to select server class: %w", err)
+		}
+
+		// Generate node pool name
+		nodePoolUUID := uuid.New().String()
+		namePrompt := &survey.Input{
+			Message: fmt.Sprintf("Enter a name for your %s node pool:", strings.ToLower(poolType)),
+			Default: nodePoolUUID,
+		}
+		if err := survey.AskOne(namePrompt, &nodePoolUUID); err != nil || nodePoolUUID == "" {
+			return nil, fmt.Errorf("node pool name is required")
+		}
+
+		// Get node count
+		nodeCount, err := client.PromptForNodeCount("")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node count: %w", err)
+		}
+		desired, _ := strconv.Atoi(nodeCount)
+
+		if poolType == "Spot" {
+			// Get the minimum bid price
+			minBidPrice, err := getBidPrice(minBidPrice)
+			if err != nil {
+				return nil, fmt.Errorf("invalid minimum bid price: %w", err)
+			}
+
+			// Get bid price for spot
+			bidPrice := ""
+			bidPrompt := &survey.Input{
+				Message: fmt.Sprintf("Enter your maximum bid price (minimum: $%s):", minBidPrice),
+				Default: minBidPrice,
+			}
+			if err := survey.AskOne(bidPrompt, &bidPrice); err != nil || bidPrice == "" {
+				return nil, fmt.Errorf("bid price is required")
+			}
+
+			// Validate the bid price
+			bidPrice, err = getBidPrice(bidPrice)
+			if err != nil {
+				return nil, fmt.Errorf("invalid bid price: %w", err)
+			}
+
+			// Format bid price
+			if bidPriceFloat, err := strconv.ParseFloat(bidPrice, 64); err == nil {
+				bidPrice = fmt.Sprintf("%.3f", bidPriceFloat)
+			}
+
+			// Add to spot node pools
+			pool := rxtspot.SpotNodePool{
+				Name:        nodePoolUUID,
+				ServerClass: serverClass,
+				BidPrice:    bidPrice,
+				Desired:     desired,
+			}
+			params.SpotNodePools = append(params.SpotNodePools, pool)
+			nodePools = append(nodePools, map[string]interface{}{
+				"type":  "spot",
+				"name":  nodePoolUUID,
+				"class": serverClass,
+				"nodes": desired,
+				"price": bidPrice,
+			})
+		} else {
+			// Add to on-demand node pools
+			pool := rxtspot.OnDemandNodePool{
+				Name:                 nodePoolUUID,
+				ServerClass:          serverClass,
+				Desired:              desired,
+				OnDemandPricePerHour: onDemandPrice,
+			}
+			params.OnDemandNodePools = append(params.OnDemandNodePools, pool)
+			nodePools = append(nodePools, map[string]interface{}{
+				"type":  "on-demand",
+				"name":  nodePoolUUID,
+				"class": serverClass,
+				"nodes": desired,
+				"price": onDemandPrice,
+			})
+		}
+
+		// Ask to add another node pool
+		if ok, err := internal.Confirm("\nAdd another node pool?", false); err != nil || !ok {
+			break
+		}
+	}
+
+	// Show configuration summary
+	fmt.Println("\nCloudspace Configuration:")
+	fmt.Printf("• %-20s %s\n", "Name:", color.CyanString(params.Name))
+	fmt.Printf("• %-20s %s\n", "Region:", color.CyanString(params.Region))
+	fmt.Printf("• %-20s %s\n", "Kubernetes Version:", color.CyanString(params.KubernetesVersion))
+	fmt.Printf("• %-20s %s\n", "CNI:", color.CyanString(params.CNI))
+
+	if len(params.SpotNodePools) > 0 {
+		fmt.Println("\nSpot Node Pools:")
+		for _, pool := range params.SpotNodePools {
+			fmt.Printf("  • %s\n", color.CyanString(pool.Name))
+			fmt.Printf("    %-15s %s\n", "Instance Type:", pool.ServerClass)
+			fmt.Printf("    %-15s %d\n", "Desired Nodes:", pool.Desired)
+			fmt.Printf("    %-15s $%s\n\n", "Bid Price:", pool.BidPrice)
+		}
+	}
+
+	if len(params.OnDemandNodePools) > 0 {
+		fmt.Println("\nOn-Demand Node Pools:")
+		for _, pool := range params.OnDemandNodePools {
+			fmt.Printf("  • %s\n", color.CyanString(pool.Name))
+			fmt.Printf("    %-15s %s\n", "Instance Type:", pool.ServerClass)
+			fmt.Printf("    %-15s %d\n", "Desired Nodes:", pool.Desired)
+			fmt.Printf("    %-15s $%s\n\n", "Price:", pool.OnDemandPricePerHour)
+		}
+	}
+
+	// Final confirmation
+	confirm, err := internal.Confirm("\nCreate cloudspace with the above configuration?", true)
+	if err != nil || !confirm {
+		return nil, fmt.Errorf("cloudspace creation cancelled")
+	}
+
+	// Ensure at least one node pool is configured
+	if len(params.SpotNodePools) == 0 && len(params.OnDemandNodePools) == 0 {
+		return nil, fmt.Errorf("at least one node pool (spot or on-demand) is required")
+	}
+
+	return params, nil
+}
+
+// validateCreateParams validates the provided parameters
+func validateCreateParams(params *createCloudspaceParams, interactive bool) error {
+	// Skip validation in interactive mode as we'll collect all required parameters
+	if interactive {
+		return nil
+	}
+
+	// Non-interactive mode validations
+	if params.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+
+	if params.Region == "" {
+		return fmt.Errorf("region is required")
+	}
+
+	// Require at least one node pool in non-interactive mode
+	if len(params.SpotNodePools) == 0 && len(params.OnDemandNodePools) == 0 {
+		return fmt.Errorf("at least one node pool is required when using flags (use --spot-nodepool or --ondemand-nodepool)")
+	}
+
+	// Validate spot node pools' bid prices
+	for i, pool := range params.SpotNodePools {
+		if pool.BidPrice == "" {
+			return fmt.Errorf("bid price is required for spot node pool %s", pool.Name)
+		}
+		_, err := validateBidPrice(pool.BidPrice)
+		if err != nil {
+			return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
+		}
+		// Update the bid price with the validated and formatted version
+		params.SpotNodePools[i].BidPrice, _ = validateBidPrice(pool.BidPrice)
+		if pool.Name == "" {
+			pool.Name = uuid.New().String()
+		}
+	}
+
+	for i, pool := range params.OnDemandNodePools {
+		if pool.Desired <= 0 {
+			return fmt.Errorf("desired number of nodes must be greater than 0 for on-demand node pool %s", pool.Name)
+		}
+		// Update the desired count with the validated value
+		params.OnDemandNodePools[i].Desired = pool.Desired
+		if pool.Name == "" {
+			pool.Name = uuid.New().String()
+		}
+	}
+	return nil
+}
+
+// loadParamsFromFlags loads parameters from command line flags and config file if provided
+func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
+	params := &createCloudspaceParams{}
+
+	// First check if config file is provided
+	configPath, _ := cmd.Flags().GetString("config")
+	if configPath != "" {
+		// Read the entire file content
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+
+		// Parse based on file extension
+		var fullConfig struct {
+			CloudSpace        rxtspot.CloudSpace         `json:"cloudspace" yaml:"cloudspace"`
+			SpotNodePools     []rxtspot.SpotNodePool     `json:"spotnodepools" yaml:"spotnodepools"`
+			OnDemandNodePools []rxtspot.OnDemandNodePool `json:"ondemandnodepools" yaml:"ondemandnodepools"`
+		}
+
+		ext := strings.ToLower(filepath.Ext(configPath))
+		switch ext {
+		case ".yaml", ".yml":
+			if err := yaml.Unmarshal(content, &fullConfig); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal YAML config: %w", err)
+			}
+		case ".json":
+			if err := json.Unmarshal(content, &fullConfig); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal JSON config: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported config file format: %s (must be .yaml, .yml, or .json)", ext)
+		}
+		// Map the config to our params and return
+		params.Name = fullConfig.CloudSpace.Name
+		params.Org = fullConfig.CloudSpace.Org
+		params.Region = fullConfig.CloudSpace.Region
+		params.KubernetesVersion = fullConfig.CloudSpace.KubernetesVersion
+		params.CNI = fullConfig.CloudSpace.CNI
+		params.SpotNodePools = fullConfig.SpotNodePools
+		params.OnDemandNodePools = fullConfig.OnDemandNodePools
+		return params, nil
+	}
+
+	// If no config file, load all parameters from flags
+	params.Name, _ = cmd.Flags().GetString("name")
+	params.Org, _ = cmd.Flags().GetString("org")
+	params.Region, _ = cmd.Flags().GetString("region")
+	params.KubernetesVersion, _ = cmd.Flags().GetString("kubernetes-version")
+	params.CNI, _ = cmd.Flags().GetString("cni")
+
+	// Handle node pools - these will be parsed later
+	spotPools, _ := cmd.Flags().GetStringArray("spot-nodepool")
+	onDemandPools, _ := cmd.Flags().GetStringArray("ondemand-nodepool")
+
+	// Convert string pools to actual node pool objects
+	for _, poolStr := range spotPools {
+		poolParams, err := parseNodepoolParams(poolStr)
+		if err != nil {
+			klog.Warningf("Failed to parse spot nodepool params '%s': %v", poolStr, err)
+			continue
+		}
+
+		desired, _ := strconv.Atoi(poolParams["desired"])
+		if desired <= 0 {
+			desired = 1 // Default to 1 if not specified or invalid
+		}
+
+		spotPool := rxtspot.SpotNodePool{
+			Name:        poolParams["name"],
+			Org:         poolParams["org"],
+			Cloudspace:  poolParams["cloudspace"],
+			ServerClass: poolParams["serverclass"],
+			BidPrice:    poolParams["bidprice"],
+			Desired:     desired,
+		}
+		params.SpotNodePools = append(params.SpotNodePools, spotPool)
+	}
+
+	for _, poolStr := range onDemandPools {
+		poolParams, err := parseNodepoolParams(poolStr)
+		if err != nil {
+			klog.Warningf("Failed to parse on-demand nodepool params '%s': %v", poolStr, err)
+			continue
+		}
+
+		desired, _ := strconv.Atoi(poolParams["desired"])
+		if desired <= 0 {
+			desired = 1 // Default to 1 if not specified or invalid
+		}
+
+		onDemandPool := rxtspot.OnDemandNodePool{
+			Org:         poolParams["org"],
+			Cloudspace:  poolParams["cloudspace"],
+			Name:        poolParams["name"],
+			ServerClass: poolParams["serverclass"],
+			Desired:     desired,
+		}
+		params.OnDemandNodePools = append(params.OnDemandNodePools, onDemandPool)
+	}
+
+	// If we got here with no node pools and no config file, that's an error
+	if len(params.SpotNodePools) == 0 && len(params.OnDemandNodePools) == 0 && params.ConfigPath == "" {
+		return nil, fmt.Errorf("no node pools specified and no config file provided")
+	}
+
+	return params, nil
+}
+
 // cloudspacesCreateCmd represents the cloudspaces create command
 var cloudspacesCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a cloudspace",
-	Long:  `Create a new cloudspace (Kubernetes cluster).`,
+	Short: "Create a new cloudspace",
+	Long:  `Create a new Rackspace Spot cloudspace (Kubernetes cluster) with optional spot and on-demand node pools.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Get CLI configuration
 		cfg, err := config.GetCLIEssentials(cmd)
-
-		name, _ := cmd.Flags().GetString("name")
-		org, _ := cmd.Flags().GetString("org")
-		region, _ := cmd.Flags().GetString("region")
-
-		if org == "" {
-			if err == nil && cfg.Org != "" {
-				org = cfg.Org
-			}
-		}
-		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		if err != nil {
+			return fmt.Errorf("failed to get CLI configuration: %w", err)
 		}
 
-		configPath, _ := cmd.Flags().GetString("config")
-		kubernetesVersion, _ := cmd.Flags().GetString("kubernetes_version")
-		cni, _ := cmd.Flags().GetString("cni")
-
-		spotNodePoolJSON, _ := cmd.Flags().GetStringArray("spot-nodepool")
-		onDemandNodePoolJSON, _ := cmd.Flags().GetStringArray("ondemand-nodepool")
-
-		// Debug: Print all flag values
-		//	fmt.Printf("DEBUG - Flag values: name='%s', region='%s', configPath='%s', kubernetesVersion='%s', cni='%s', spotNodePools=%d, onDemandNodePools=%d\n",
-		//		name, region, configPath, kubernetesVersion, cni, len(spotNodePoolJSON), len(onDemandNodePoolJSON))
-
-		// Check if we're in interactive mode (no flags provided)
-		// Note: kubernetesVersion and cni have default values, so we only check if they're explicitly set
-		hasAnyFlag := name != "" || region != "" || configPath != "" ||
-			(kubernetesVersion != "" && kubernetesVersion != "1.31.1") ||
-			(cni != "" && cni != "calico") ||
-			len(spotNodePoolJSON) > 0 || len(onDemandNodePoolJSON) > 0
-
-		//	fmt.Printf("DEBUG - hasAnyFlag: %v\n", hasAnyFlag)
-
-		// 1. Create client early since we need it for interactive prompts
+		// Initialize client
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return fmt.Errorf("failed to initialize client: %w", err)
 		}
 
-		// Check if we're using a config file
-		if configPath != "" {
-			// When --config is provided, skip all other validations and prompts
-			fmt.Println("Using configuration from file:", configPath)
-		} else {
-			// hasAnyFlag is already set above
+		// Check if we're in interactive mode
+		interactive := isInteractiveMode(cmd)
 
-			// If any flag is provided, ensure all required flags are provided for non-interactive mode
-			if hasAnyFlag {
-				// Check for required flags
-				if name == "" {
-					return fmt.Errorf("name is required when using flags (use --name)")
-				}
-				if region == "" {
-					return fmt.Errorf("region is required when using flags (use --region)")
-				}
-				if len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 {
-					return fmt.Errorf("at least one node pool is required when using flags (use --spot-nodepool or --ondemand-nodepool)")
-				}
-
-				// In non-interactive mode, we don't prompt for anything
-				fmt.Printf("Using specified region: %s\n", color.GreenString(region))
-			} else {
-				// Interactive mode - show all prompts
-				fmt.Println("\nStarting interactive cloudspace creation...")
-
-				// Interactive prompt for region selection with dropdown
-				fmt.Println("\nFetching available regions...")
-				
-				// First try with default region from config if available
-				defaultRegion := ""
-				if cfg != nil && cfg.Region != "" {
-					defaultRegion = cfg.Region
-				}
-
-				// Use the client's interactive prompt
-				selectedRegion, err := client.PromptForRegionWithDefault(context.Background(), defaultRegion)
-				if err != nil {
-					return fmt.Errorf("failed to select region: %w", err)
-				}
-				region = selectedRegion
-				fmt.Printf("\nSelected region: %s\n", color.GreenString(region))
-
-				// Interactive prompt for cloudspace name
-				namePrompt := &survey.Input{
-					Message: "Enter a name for your cloudspace:",
-				}
-				if err := survey.AskOne(namePrompt, &name); err != nil {
-					return fmt.Errorf("failed to get cloudspace name: %w", err)
-				}
-				if name == "" {
-					return fmt.Errorf("name is required")
-				}
-
-				// Set default values for other required fields
-				if kubernetesVersion == "" {
-					kubernetesVersion = "1.31.1"
-				}
-				if cni == "" {
-					cni = "calico"
-				}
-			}
-		}
-
-		// Additional check for config and name conflict
-		if configPath != "" && name != "" {
-			return fmt.Errorf("cannot specify both --config and --name")
-		}
-
-		var cloudspace *rxtspot.CloudSpace
-		var spotnodepool *rxtspot.SpotNodePool
-
-		var spotnodepools []rxtspot.SpotNodePool
-		var ondemandnodepools []rxtspot.OnDemandNodePool
-
-		if configPath != "" {
-			// Read config file (YAML or JSON)
-			b, err := os.ReadFile(configPath)
+		// Load parameters based on mode
+		var params *createCloudspaceParams
+		if interactive {
+			// Interactive mode - collect input from user
+			params, err = collectInteractiveInput(client, cfg)
 			if err != nil {
-				return fmt.Errorf("failed to read config file: %w", err)
-			}
-
-			// Try YAML -> JSON conversion
-			if strings.HasSuffix(configPath, ".yaml") || strings.HasSuffix(configPath, ".yml") {
-				jsonBytes, err := yaml.YAMLToJSON(b)
-				if err != nil {
-					return fmt.Errorf("failed to convert YAML to JSON: %w", err)
-				}
-				b = jsonBytes
-			}
-
-			// 🔹 Expect file to contain cloudspace + multiple pools
-			var fullConfig struct {
-				CloudSpace        rxtspot.CloudSpace         `json:"cloudspace"`
-				SpotNodePools     []rxtspot.SpotNodePool     `json:"spotnodepools"`
-				OnDemandNodePools []rxtspot.OnDemandNodePool `json:"ondemandnodepools"`
-			}
-			if err := json.Unmarshal(b, &fullConfig); err != nil {
-				return fmt.Errorf("failed to parse config file: %w", err)
-			}
-
-			cloudspace = &fullConfig.CloudSpace
-			spotnodepools = fullConfig.SpotNodePools
-			ondemandnodepools = fullConfig.OnDemandNodePools
-
-			// 🔹 Fill missing org/cloudspace for each spot node pool
-			for i := range spotnodepools {
-				if spotnodepools[i].Org == "" {
-					spotnodepools[i].Org = cloudspace.Org
-				}
-				if spotnodepools[i].Cloudspace == "" {
-					spotnodepools[i].Cloudspace = cloudspace.Name
-				}
-			}
-
-			// 🔹 Fill missing org/cloudspace for each on-demand node pool
-			for i := range ondemandnodepools {
-				if ondemandnodepools[i].Org == "" {
-					ondemandnodepools[i].Org = cloudspace.Org
-				}
-				if ondemandnodepools[i].Cloudspace == "" {
-					ondemandnodepools[i].Cloudspace = cloudspace.Name
-				}
+				return fmt.Errorf("failed to collect interactive input: %w", err)
 			}
 		} else {
-			cloudspace = &rxtspot.CloudSpace{
-				Name:              name,
-				Org:               org,
-				Region:            region,
-				KubernetesVersion: kubernetesVersion,
-				Cni:               cni,
+			// Non-interactive mode - load from flags
+			params, err = loadParamsFromFlags(cmd)
+			if err != nil {
+				return fmt.Errorf("failed to load parameters from flags: %w", err)
 			}
+		}
 
-			for _, poolStr := range spotNodePoolJSON {
-				// Check if it's a JSON string (backward compatibility)
-				if strings.TrimSpace(poolStr)[0] == '{' {
-					// First, unmarshal into a map to handle type conversion
-					var rawPool map[string]interface{}
-					if err := json.Unmarshal([]byte(poolStr), &rawPool); err != nil {
-						return fmt.Errorf("failed to parse spotnodepool JSON: %w", err)
-					}
+		// Set default values
+		if params.Org == "" && cfg.Org != "" {
+			params.Org = cfg.Org
+		}
+		if params.Region == "" && cfg.Region != "" {
+			params.Region = cfg.Region
+		}
 
-					// If server class is not provided, prompt for it
-					serverClass, ok := rawPool["serverclass"].(string)
-					if !ok || serverClass == "" {
-						sc, err := client.PromptForServerClass(context.Background(), region)
-						if err != nil {
-							return fmt.Errorf("failed to select server class: %w", err)
-						}
-						serverClass = sc
-						fmt.Printf("Selected server class: %s\n", color.GreenString(serverClass))
-					}
+		// Validate parameters
+		if err := validateCreateParams(params, interactive); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
 
-					// Create a new SpotNodePool and populate it
-					pool := rxtspot.SpotNodePool{
-						Org:         org,
-						Cloudspace:  cloudspace.Name,
-						ServerClass: serverClass,
-					}
-
-					// Handle each field with proper type conversion
-					for key, value := range rawPool {
-						switch strings.ToLower(key) {
-						case "name":
-							if strVal, ok := value.(string); ok {
-								pool.Name = strVal
-							}
-						case "serverclass":
-							if strVal, ok := value.(string); ok {
-								pool.ServerClass = strVal
-							}
-						case "desired":
-							switch v := value.(type) {
-							case float64:
-								pool.Desired = int(v)
-							case string:
-								if intVal, err := strconv.Atoi(v); err == nil {
-									pool.Desired = intVal
-								}
-							}
-						case "bidprice":
-							switch v := value.(type) {
-							case string:
-								if formatted, err := validateBidPrice(v); err == nil {
-									pool.BidPrice = formatted
-								}
-							case float64:
-								pool.BidPrice = fmt.Sprintf("%.3f", v)
-								// Ensure it has exactly 3 decimal places
-								if !strings.Contains(pool.BidPrice, ".") {
-									pool.BidPrice += ".000"
-								} else {
-									parts := strings.Split(pool.BidPrice, ".")
-									if len(parts) == 2 && len(parts[1]) < 3 {
-										pool.BidPrice += strings.Repeat("0", 3-len(parts[1]))
-									}
-								}
-							}
-						}
-					}
-
-					// Set defaults if not provided
-					if pool.ServerClass == "" {
-						pool.ServerClass = defaultServerclass
-					}
-					if pool.Desired == 0 {
-						pool.Desired = 1
-					}
-
-					spotnodepools = append(spotnodepools, pool)
-					continue
-				}
-
-				// Parse key=value parameters
-				pool := rxtspot.SpotNodePool{
-					Org:        org,
-					Cloudspace: cloudspace.Name,
-				}
-
-				// Parse key=value parameters
-				params, err := parseNodepoolParams(poolStr)
-				if err != nil {
-					return fmt.Errorf("failed to parse spotnodepool parameters: %w", err)
-				}
-
-				// Apply parameters to the pool
-				for key, value := range params {
-					switch strings.ToLower(key) {
-					case "name":
-						pool.Name = value
-					case "serverclass":
-						pool.ServerClass = value
-					case "desired":
-						desired, err := strconv.Atoi(value)
-						if err != nil {
-							return fmt.Errorf("invalid desired value '%s': %w", value, err)
-						}
-						pool.Desired = desired
-					case "bidprice":
-						formattedBidPrice, err := validateBidPrice(value)
-						if err != nil {
-							return fmt.Errorf("invalid bid price '%s': %w", value, err)
-						}
-						pool.BidPrice = formattedBidPrice
-					default:
-						return fmt.Errorf("unknown nodepool parameter: %s", key)
-					}
-				}
-
-				// Set defaults if not provided
-				if pool.ServerClass == "" {
-					pool.ServerClass = defaultServerclass
-				}
-				if pool.Desired == 0 {
-					pool.Desired = 1
-				}
-				if pool.Name == "" {
-					pool.Name = fmt.Sprintf("spot-pool-%d", len(spotnodepools)+1)
-				}
-
-				spotnodepools = append(spotnodepools, pool)
-			}
-
-			for _, poolStr := range onDemandNodePoolJSON {
-				// Check if it's a JSON string (backward compatibility)
-				if strings.TrimSpace(poolStr)[0] == '{' {
-					// First, unmarshal into a map to handle type conversion
-					var rawPool map[string]interface{}
-					if err := json.Unmarshal([]byte(poolStr), &rawPool); err != nil {
-						return fmt.Errorf("failed to parse ondemandnodepool JSON: %w", err)
-					}
-
-					// Create a new OnDemandNodePool and populate it
-					pool := rxtspot.OnDemandNodePool{
-						Org:        org,
-						Cloudspace: cloudspace.Name,
-					}
-
-					// Handle each field with proper type conversion
-					for key, value := range rawPool {
-						switch strings.ToLower(key) {
-						case "name":
-							if strVal, ok := value.(string); ok {
-								pool.Name = strVal
-							}
-						case "serverclass":
-							if strVal, ok := value.(string); ok {
-								pool.ServerClass = strVal
-							}
-						case "desired":
-							switch v := value.(type) {
-							case float64:
-								pool.Desired = int(v)
-							case string:
-								if intVal, err := strconv.Atoi(v); err == nil {
-									pool.Desired = intVal
-								}
-							}
-						}
-					}
-
-					// Set defaults if not provided
-					if pool.ServerClass == "" {
-						pool.ServerClass = defaultServerclass
-					}
-					if pool.Desired == 0 {
-						pool.Desired = 1
-					}
-					if pool.Name == "" {
-						pool.Name = fmt.Sprintf("ondemand-pool-%d", len(ondemandnodepools)+1)
-					}
-
-					ondemandnodepools = append(ondemandnodepools, pool)
-					continue
-				}
-
-				// Parse key=value parameters
-				pool := rxtspot.OnDemandNodePool{
-					Org:        org,
-					Cloudspace: cloudspace.Name,
-				}
-
-				// Parse key=value parameters
-				params, err := parseNodepoolParams(poolStr)
-				if err != nil {
-					return fmt.Errorf("failed to parse ondemandnodepool parameters: %w", err)
-				}
-
-				// Apply parameters to the pool
-				for key, value := range params {
-					switch strings.ToLower(key) {
-					case "name":
-						pool.Name = value
-					case "serverclass":
-						pool.ServerClass = value
-					case "desired":
-						desired, err := strconv.Atoi(value)
-						if err != nil {
-							return fmt.Errorf("invalid desired value '%s': %w", value, err)
-						}
-						pool.Desired = desired
-					}
-				}
-
-				// Set defaults if not provided
-				if pool.ServerClass == "" {
-					pool.ServerClass = defaultServerclass
-				}
-				if pool.Desired == 0 {
-					pool.Desired = 1
-				}
-				if pool.Name == "" {
-					pool.Name = fmt.Sprintf("ondemand-pool-%d", len(ondemandnodepools)+1)
-				}
-
-				ondemandnodepools = append(ondemandnodepools, pool)
-			}
-
-			// Only show interactive node pool configuration in interactive mode
-			if !hasAnyFlag && len(spotNodePoolJSON) == 0 && len(onDemandNodePoolJSON) == 0 {
-				color.Yellow("⚠️  No node pool configurations were specified. Let's configure a spot node pool.")
-
-				// Prompt for server class
-				serverClass, err := client.PromptForServerClass(context.Background(), region)
-				if err != nil {
-					return fmt.Errorf("failed to select server class: %w", err)
-				}
-
-				// Get minimum bid price for the selected server class
-				minBidPrice, err := client.GetAPI().GetMinimumBidPriceForServerClass(context.Background(), serverClass)
-				if err != nil {
-					minBidPrice = "0.05"
-				}
-				minBidPrice = strings.TrimPrefix(minBidPrice, "$")
-
-				// Prompt for bid price with minimum value validation
-				bidPricePrompt := &survey.Input{
-					Message: fmt.Sprintf("Enter bid price (min: $%s per hour):", minBidPrice),
-					Default: minBidPrice,
-				}
-				var bidPriceStr string
-				if err := survey.AskOne(bidPricePrompt, &bidPriceStr); err != nil {
-					return fmt.Errorf("failed to get bid price: %w", err)
-				}
-
-				// Validate bid price
-				bidPrice, err := strconv.ParseFloat(bidPriceStr, 64)
-				if err != nil {
-					return fmt.Errorf("invalid bid price: %w", err)
-				}
-
-				minPrice, _ := strconv.ParseFloat(minBidPrice, 64)
-				if bidPrice < minPrice {
-					color.Yellow("⚠️  Bid price ($%.3f) is below the minimum recommended price ($%s). This may result in node termination.", bidPrice, minBidPrice)
-					confirm := false
-					confirmPrompt := &survey.Confirm{
-						Message: "Do you want to proceed with this bid price?",
-						Default: false,
-					}
-					if err := survey.AskOne(confirmPrompt, &confirm); err != nil || !confirm {
-						return fmt.Errorf("aborted by user")
-					}
-				}
-
-				// Prompt for number of nodes
-				nodesPrompt := &survey.Input{
-					Message: "Number of nodes:",
-					Default: "1",
-				}
-				nodesStr := "1"
-				if err := survey.AskOne(nodesPrompt, &nodesStr); err != nil {
-					return fmt.Errorf("failed to get number of nodes: %w", err)
-				}
-
-				nodes, err := strconv.Atoi(nodesStr)
-				if err != nil || nodes < 1 {
-					nodes = 1
-				}
-
-				// Generate a UUID for the node pool name
-				nodePoolName, err := uuid.NewRandom()
-				if err != nil {
-					return fmt.Errorf("failed to generate node pool name: %w", err)
-				}
-
-				// Create the spot node pool with a generated UUID name
-				spotnodepool = &rxtspot.SpotNodePool{
-					Name:        nodePoolName.String(),
-					Org:         cloudspace.Org,
-					Cloudspace:  cloudspace.Name,
-					ServerClass: serverClass,
-					Desired:     nodes,
-					BidPrice:    fmt.Sprintf("%.3f", bidPrice),
-				}
-
-				// Show spot node pool summary
-				color.Green("\n📋 Spot Node Pool Configuration:")
-				color.Green("• Server Class  : %s", spotnodepool.ServerClass)
-				color.Green("• Nodes         : %d", spotnodepool.Desired)
-				color.Green("• Bid Price     : $%s/hour", spotnodepool.BidPrice)
-
-				spotnodepools = append(spotnodepools, *spotnodepool)
-
-				// Ask if user wants to create an on-demand node pool
-				addOndemand := false
-				ondemandPrompt := &survey.Confirm{
-					Message: "Would you like to add an on-demand node pool?",
-					Default: false,
-				}
-				if err := survey.AskOne(ondemandPrompt, &addOndemand); err != nil {
-					return fmt.Errorf("failed to get on-demand node pool preference: %w", err)
-				}
-
-				if addOndemand {
-					// Prompt for on-demand node pool configuration
-					onDemandServerClass, err := client.PromptForServerClass(context.Background(), region)
-					if err != nil {
-						return fmt.Errorf("failed to get on-demand server class: %w", err)
-					}
-
-					nodesStr, err := client.PromptForNodeCount("on-demand")
-					if err != nil {
-						return fmt.Errorf("failed to get number of on-demand nodes: %w", err)
-					}
-
-					nodes, err := strconv.Atoi(nodesStr)
-					if err != nil || nodes < 1 {
-						nodes = 1
-					}
-
-					// Generate a UUID for the on-demand node pool name
-					onDemandPoolName, err := uuid.NewRandom()
-					if err != nil {
-						return fmt.Errorf("failed to generate on-demand node pool name: %w", err)
-					}
-
-					onDemandPool := &rxtspot.OnDemandNodePool{
-						Name:        onDemandPoolName.String(),
-						Org:         cloudspace.Org,
-						Cloudspace:  cloudspace.Name,
-						ServerClass: onDemandServerClass,
-						Desired:     nodes,
-					}
-
-					// Show on-demand pool summary
-					color.Green("\n📋 On-Demand Node Pool Configuration:")
-					color.Green("• Server Class  : %s", onDemandPool.ServerClass)
-					color.Green("• Nodes         : %d", onDemandPool.Desired)
-
-					ondemandnodepools = append(ondemandnodepools, *onDemandPool)
-				}
-			}
-
-			// Show final configuration
-			color.Green("\n📋 Final Cloudspace Configuration:")
-			color.Green("• Name          : %s", cloudspace.Name)
-			color.Green("• Region        : %s", region)
-			color.Green("• Spot Pools    : %d", len(spotnodepools))
-			color.Green("• On-Demand Pools: %d", len(ondemandnodepools))
-
-			// Skip confirmation in non-interactive mode
-			if !hasAnyFlag {
-				confirm := false
-				confirmPrompt := &survey.Confirm{
-					Message: "Create cloudspace with this configuration?",
-					Default: true,
-				}
-				if err := survey.AskOne(confirmPrompt, &confirm); err != nil || !confirm {
-					return fmt.Errorf("aborted by user")
-				}
-			}
+		// Create cloudspace with all required fields
+		cloudspace := rxtspot.CloudSpace{
+			Name:                 params.Name,
+			Org:                  params.Org,
+			Region:               params.Region,
+			KubernetesVersion:    params.KubernetesVersion,
+			CNI:                  params.CNI,
+			PreemptionWebhookURL: "", // Empty webhook URL by default
+		}
+		fmt.Printf("cloudspace object to be created - %+v \n", cloudspace)
+		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
+			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
 
 		// Track created resources for cleanup in case of failure
-		type cleanupFunc func() error
-		var cleanupStack []cleanupFunc
-		var createdCloudspace bool
+		createdResources := struct {
+			cloudspaceCreated bool
+			nodePoolsCreated  []struct {
+				name   string
+				isSpot bool
+			}
+		}{
+			cloudspaceCreated: true,
+			nodePoolsCreated: make([]struct {
+				name   string
+				isSpot bool
+			}, 0),
+		}
 
-		// Defer cleanup function that will run if we return with an error
+		// Defer cleanup function in case of error
 		defer func() {
-			if err == nil || !createdCloudspace {
-				// No error or cloudspace wasn't created, nothing to clean up
-				return
-			}
+			if err != nil && createdResources.cloudspaceCreated {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
 
-			// Run cleanup in reverse order (LIFO)
-			for i := len(cleanupStack) - 1; i >= 0; i-- {
-				if cleanupErr := cleanupStack[i](); cleanupErr != nil {
-					// Log but don't fail the cleanup process
-					fmt.Fprintf(os.Stderr, "Warning: cleanup failed: %v\n", cleanupErr)
+				// Delete all created node pools in reverse order
+				for i := len(createdResources.nodePoolsCreated) - 1; i >= 0; i-- {
+					np := createdResources.nodePoolsCreated[i]
+					var cleanupErr error
+					if np.isSpot {
+						cleanupErr = client.GetAPI().DeleteSpotNodePool(cleanupCtx, params.Org, np.name)
+					} else {
+						cleanupErr = client.GetAPI().DeleteOnDemandNodePool(cleanupCtx, params.Org, np.name)
+					}
+					if cleanupErr != nil {
+						klog.Warningf("Failed to clean up node pool %s: %v", np.name, cleanupErr)
+					}
 				}
-			}
-			// Finally, delete the cloudspace if we created it
-			if createdCloudspace {
-				if delErr := client.GetAPI().DeleteCloudspace(context.Background(), cloudspace.Name, cloudspace.Org); delErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to clean up cloudspace: %v\n", delErr)
+
+				// Delete the cloudspace
+				if delErr := client.GetAPI().DeleteCloudspace(cleanupCtx, params.Org, params.Name); delErr != nil {
+					klog.Warningf("Failed to clean up cloudspace %s: %v", params.Name, delErr)
 				}
+
+				fmt.Fprintf(os.Stderr, "\n%s Cleaned up partially created resources due to error\n",
+					color.YellowString("!"),
+				)
 			}
 		}()
 
-		// 1. First, validate all resources
-		for i, pool := range spotnodepools {
-			if pool.ServerClass == "" {
-				return fmt.Errorf("spot nodepool %d: server class is required", i)
-			}
-			if pool.Desired <= 0 {
-				return fmt.Errorf("spot nodepool %d: desired must be greater than 0", i)
-			}
-			if pool.BidPrice == "" {
-				return fmt.Errorf("spot nodepool %d: bid price is required", i)
-			}
-		}
-
-		// Show creating message right before starting resource creation
-		if hasAnyFlag {
-			fmt.Printf("\nCreating cloudspace - %s with the provided configuration...\n", cloudspace.Name)
-		}
-
-		for i, pool := range ondemandnodepools {
-			if pool.ServerClass == "" {
-				return fmt.Errorf("on-demand nodepool %d: server class is required", i)
-			}
-			if pool.Desired <= 0 {
-				return fmt.Errorf("on-demand nodepool %d: desired must be greater than 0", i)
-			}
-		}
-
-		// 2. Create cloudspace
-		err = client.GetAPI().CreateCloudspace(context.Background(), *cloudspace)
-		if err != nil {
-			if rxtspot.IsForbidden(err) {
-				return fmt.Errorf("forbidden: %w", err)
-			}
-			if rxtspot.IsConflict(err) {
-				return fmt.Errorf("a cloudspace with this name already exists")
-			}
-			return fmt.Errorf("%w", err)
-		}
-		createdCloudspace = true
-
-		// 3. Create spot node pools
-		for i, pool := range spotnodepools {
-			err = client.GetAPI().CreateSpotNodePool(context.Background(), org, pool)
+		// Create spot node pools if any
+		for _, pool := range params.SpotNodePools {
+			// Ensure bid price is properly formatted
+			bidPrice, err := validateBidPrice(pool.BidPrice)
 			if err != nil {
-				return fmt.Errorf("failed to create spot nodepool %s: %w", pool.Name, err)
+				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
 			}
-			// Add cleanup function for this pool
-			i := i // Capture loop variable
-			cleanupStack = append(cleanupStack, func() error {
-				return client.GetAPI().DeleteSpotNodePool(context.Background(), org, spotnodepools[i].Name)
-			})
-		}
 
-		// 4. Create on-demand node pools
-		for i, pool := range ondemandnodepools {
-			err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, pool)
+			// Validate the bid price
+			bidPrice, err = getBidPrice(bidPrice)
 			if err != nil {
-				return fmt.Errorf("failed to create on-demand nodepool %s: %w", pool.Name, err)
+				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
 			}
-			// Add cleanup function for this pool
-			i := i // Capture loop variable
-			cleanupStack = append(cleanupStack, func() error {
-				return client.GetAPI().DeleteOnDemandNodePool(context.Background(), org, ondemandnodepools[i].Name)
-			})
+
+			fmt.Printf("Creating spot node pool %q with server class %q, %d nodes, and bid price $%s...\n",
+				pool.Name, pool.ServerClass, pool.Desired, bidPrice)
+
+			spotPool := rxtspot.SpotNodePool{
+				Name:        pool.Name,
+				Org:         params.Org,
+				Cloudspace:  params.Name,
+				ServerClass: pool.ServerClass,
+				BidPrice:    bidPrice,
+				Desired:     pool.Desired,
+			}
+
+			if err := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool); err != nil {
+				return fmt.Errorf("failed to create spot node pool %s: %w", pool.Name, err)
+			}
+
+			// Track created pool for cleanup
+			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
+				struct {
+					name   string
+					isSpot bool
+				}{name: pool.Name, isSpot: true})
+
+			// Verify the pool was created successfully
+			if _, err := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, pool.Name); err != nil {
+				return fmt.Errorf("failed to verify creation of spot node pool %s: %w", pool.Name, err)
+			}
 		}
 
-		// If we got here, everything was created successfully
-		// Clear the cleanup stack to prevent cleanup on success
-		cleanupStack = nil
+		// Create on-demand node pools if any
+		for _, pool := range params.OnDemandNodePools {
+			fmt.Printf("Creating on-demand node pool %q with server class %q and %d nodes...\n",
+				pool.Name, pool.ServerClass, pool.Desired)
 
-		// for range spotnodepools {
-		// 	fmt.Printf("Spot node pool created successfully\n")
-		// }
-		// for range ondemandnodepools {
-		// 	fmt.Printf("On-demand node pool created successfully\n")
-		// }
+			onDemandPool := rxtspot.OnDemandNodePool{
+				Name:        pool.Name,
+				Org:         params.Org,
+				Cloudspace:  params.Name,
+				ServerClass: pool.ServerClass,
+				Desired:     pool.Desired,
+			}
 
-		cloudspace, err = client.GetAPI().GetCloudspace(context.Background(), org, cloudspace.Name)
-		if err != nil {
-			return fmt.Errorf("%w", err)
+			if err := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool); err != nil {
+				return fmt.Errorf("failed to create on-demand node pool %s: %w", pool.Name, err)
+			}
+
+			// Track created pool for cleanup
+			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
+				struct {
+					name   string
+					isSpot bool
+				}{name: pool.Name, isSpot: false})
+
+			// Verify the pool was created successfully
+			if _, err := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, pool.Name); err != nil {
+				return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", pool.Name, err)
+			}
 		}
-		//fmt.Printf("Cloudspace '%s' created successfully\n", cloudspace.Name)
 
+		// If we got here, everything was successful
+		fmt.Printf("\n%s Successfully created cloudspace '%s' in region '%s'\n",
+			color.GreenString("✓"),
+			color.CyanString(cloudspace.Name),
+			color.CyanString(cloudspace.Region),
+		)
+
+		// Output the created cloudspace details
 		return internal.OutputData(cloudspace, outputFormat)
 	},
+}
+
+// isInteractiveMode checks if we should run in interactive mode
+func isInteractiveMode(cmd *cobra.Command) bool {
+	// If --config flag is provided, never use interactive mode
+	if configPath, _ := cmd.Flags().GetString("config"); configPath != "" {
+		return false
+	}
+
+	// If any of the required flags are not set, run in interactive mode
+	requiredFlags := []string{"name", "region"}
+	for _, flag := range requiredFlags {
+		if !cmd.Flags().Changed(flag) {
+			return true
+		}
+	}
+
+	// Also check if we have at least one node pool specified
+	spotPools, _ := cmd.Flags().GetStringArray("spot-nodepool")
+	onDemandPools, _ := cmd.Flags().GetStringArray("ondemand-nodepool")
+	if len(spotPools) == 0 && len(onDemandPools) == 0 {
+		return true
+	}
+
+	return false
 }
 
 // cloudspacesGetCmd represents the cloudspaces get command
 var cloudspacesGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Get cloudspace details",
-	Long:  `Get details for a specific cloudspace.`,
+	Long:  `Get details about a specific cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.GetCLIEssentials(cmd)
-		if err != nil {
-			return err
-		}
-
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
 			return fmt.Errorf("name is required")
 		}
 
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			if err == nil && cfg.Org != "" {
-				org = cfg.Org
-			}
+		if org == "" && cfg != nil && cfg.Org != "" {
+			org = cfg.Org
 		}
 		if org == "" {
 			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
@@ -862,7 +815,7 @@ var cloudspacesGetCmd = &cobra.Command{
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to initialize client: %w", err)
 		}
 
 		cloudspace, err := client.GetAPI().GetCloudspace(context.Background(), org, name)
@@ -870,17 +823,32 @@ var cloudspacesGetCmd = &cobra.Command{
 			if rxtspot.IsNotFound(err) {
 				return fmt.Errorf("cloudspace '%s' not found", name)
 			}
-			if rxtspot.IsForbidden(err) {
-				return fmt.Errorf("forbidden: %w", err)
-			}
-			if rxtspot.IsConflict(err) {
-				return fmt.Errorf("conflict: %w", err)
-			}
-			return fmt.Errorf("%w", err)
+			return fmt.Errorf("failed to get cloudspace: %w", err)
 		}
 
-		return internal.OutputData(cloudspace, outputFormat)
+		fmt.Printf("\nCloudspace Details:\n")
+		fmt.Printf("Name:              %s\n", color.CyanString(cloudspace.Name))
+		fmt.Printf("Status:            %s\n", colorStatus(cloudspace.Status))
+		fmt.Printf("Region:            %s\n", cloudspace.Region)
+		fmt.Printf("Kubernetes Version: %s\n", cloudspace.KubernetesVersion)
+		fmt.Printf("CNI:               %s\n", cloudspace.CNI)
+
+		return nil
 	},
+}
+
+// Helper function to color status
+func colorStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "active":
+		return color.GreenString(status)
+	case "creating", "updating":
+		return color.YellowString(status)
+	case "failed", "error":
+		return color.RedString(status)
+	default:
+		return status
+	}
 }
 
 // cloudspacesDeleteCmd represents the cloudspaces delete command
@@ -959,7 +927,7 @@ func init() {
 	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name")
 	cloudspacesCreateCmd.Flags().String("org", "", "Organization ID")
 	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
-	cloudspacesCreateCmd.Flags().StringP("kubernetes_version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
+	cloudspacesCreateCmd.Flags().StringP("kubernetes-version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
 
 	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, "Spot nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)")
 	cloudspacesCreateCmd.Flags().StringArray("ondemand-nodepool", []string{}, "Ondemand nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord)")
