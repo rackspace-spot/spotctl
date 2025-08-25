@@ -20,7 +20,7 @@ func OutputData(data interface{}, format string) error {
 	case "table":
 		return outputTable(data)
 	default:
-		return fmt.Errorf("unsupported output format: %s", format)
+		return outputJSON(data)
 	}
 }
 

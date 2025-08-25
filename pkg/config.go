@@ -12,8 +12,8 @@ import (
 
 type SpotConfig struct {
 	Org          string `yaml:"org"`
-	RefreshToken string `yaml:"refresh_token"`
-	AccessToken  string `yaml:"access_token"`
+	RefreshToken string `yaml:"refreshToken"`
+	AccessToken  string `yaml:"accessToken"`
 	Region       string `yaml:"region"`
 }
 
@@ -57,7 +57,6 @@ func SaveConfig(cfg *SpotConfig) error {
 	if err != nil {
 		return err
 	}
-
 	return os.WriteFile(path, data, 0600) // 600 = rw-------
 }
 

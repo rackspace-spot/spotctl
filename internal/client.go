@@ -69,7 +69,3 @@ func (c *Client) GetAPI() rxtspot.SpotAPI {
 func (c *Client) Authenticate(ctx context.Context) (string, error) {
 	return c.api.Authenticate(ctx)
 }
-
-// func (c *Client) ListSpotNodePools(ctx context.Context, org string, cloudspace string) ([]*rxtspot.SpotNodePool, error) {
-// 	return c.api.ListSpotNodePools(ctx, org, cloudspace)
-// }

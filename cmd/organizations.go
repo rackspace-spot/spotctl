@@ -11,9 +11,10 @@ import (
 
 // organizationsCmd represents the organizations command
 var organizationsCmd = &cobra.Command{
-	Use:   "organizations",
-	Short: "Manage organizations",
-	Long:  `Manage Rackspace Spot organizations (namespaces).`,
+	Use:     "organizations",
+	Short:   "Manage organizations",
+	Long:    `Manage Rackspace Spot organizations (namespaces).`,
+	Aliases: []string{"org", "organization"},
 }
 
 // organizationsListCmd represents the organizations list command
