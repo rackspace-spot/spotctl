@@ -10,9 +10,10 @@ import (
 )
 
 var serverclassesCmd = &cobra.Command{
-	Use:   "serverclasses",
-	Short: "Manage serverclasses",
-	Long:  `Manage Rackspace Spot serverclasses.`,
+	Use:     "serverclasses",
+	Short:   "Manage serverclasses",
+	Long:    `Manage Rackspace Spot serverclasses.`,
+	Aliases: []string{"sc", "serverclass"},
 }
 
 var serverclassesListCmd = &cobra.Command{

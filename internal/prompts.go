@@ -12,8 +12,8 @@ import (
 )
 
 const kubernetesVersion1_31_1 = "1.31.1"
-const kubernetesVersion1_30_0 = "1.30.0"
-const kubernetesVersion1_29_0 = "1.29.0"
+const kubernetesVersion1_30_10 = "1.30.10"
+const kubernetesVersion1_29_6 = "1.29.6"
 const cniCalico = "calico"
 const cniCilium = "cilium"
 const cniBringYourOwn = "bring your own CNI"
@@ -235,8 +235,8 @@ func (c *Client) PromptForKubernetesVersion(defaultVersion string) (string, erro
 	// These are common Kubernetes versions, you might want to fetch them from an API
 	versions := []string{
 		kubernetesVersion1_31_1,
-		kubernetesVersion1_30_0,
-		kubernetesVersion1_29_0,
+		kubernetesVersion1_30_10,
+		kubernetesVersion1_29_6,
 	}
 
 	// If default version is not in the list, add it

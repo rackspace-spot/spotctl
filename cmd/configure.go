@@ -20,15 +20,24 @@ var configureCmd = &cobra.Command{
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Print("Organization ID: ")
-		orgID, _ := reader.ReadString('\n')
+		orgID, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read organization ID: %w", err)
+		}
 		orgID = strings.TrimSpace(orgID)
 
 		fmt.Print("Refresh Token: ")
-		refreshToken, _ := reader.ReadString('\n')
+		refreshToken, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read refresh token: %w", err)
+		}
 		refreshToken = strings.TrimSpace(refreshToken)
 
 		fmt.Print("Preferred Region: ")
-		region, _ := reader.ReadString('\n')
+		region, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read preferred region: %w", err)
+		}
 		region = strings.TrimSpace(region)
 
 		client, err := internal.NewClientWithTokens(refreshToken, "")

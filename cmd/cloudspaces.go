@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
+
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
 	"github.com/google/uuid"
@@ -25,12 +27,53 @@ import (
 
 // cloudspacesCmd represents the cloudspaces command
 var cloudspacesCmd = &cobra.Command{
-	Use:   "cloudspaces",
-	Short: "Manage cloudspaces",
-	Long:  `Manage Rackspace Spot cloudspaces (Kubernetes clusters).`,
+	Use:     "cloudspaces",
+	Short:   "Manage cloudspaces",
+	Long:    `Manage Rackspace Spot cloudspaces (Kubernetes clusters).`,
+	Aliases: []string{"cs", "cloudspace"},
 }
 
-const defaultServerclass = "gp.vs1.medium-iad"
+func init() {
+	rootCmd.AddCommand(cloudspacesCmd)
+	cloudspacesCmd.AddCommand(cloudspacesListCmd)
+	cloudspacesCmd.AddCommand(cloudspacesCreateCmd)
+	cloudspacesCmd.AddCommand(cloudspacesGetCmd)
+	cloudspacesCmd.AddCommand(cloudspacesDeleteCmd)
+	cloudspacesCmd.AddCommand(cloudspacesGetConfigCmd)
+
+	// Add flags for cloudspaces list
+	cloudspacesListCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesListCmd.Flags().StringP("output", "o", "json", "Output format (json, table, yaml)")
+
+	// Add flags for cloudspaces create
+	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name")
+	cloudspacesCreateCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
+	cloudspacesCreateCmd.Flags().StringP("kubernetes-version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
+	cloudspacesCreateCmd.Flags().String("preemption-webhook-url", "", "Preemption webhook URL")
+
+	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, "Spot nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)")
+	cloudspacesCreateCmd.Flags().StringArray("ondemand-nodepool", []string{}, "Ondemand nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord)")
+	cloudspacesCreateCmd.Flags().String("config", "", "Path to config file (YAML or JSON)")
+	cloudspacesCreateCmd.Flags().StringP("cni", "", "calico", "CNI (default: calico)")
+
+	// Add flags for cloudspaces get
+	cloudspacesGetCmd.Flags().String("name", "", "Cloudspace name (required)")
+	cloudspacesGetCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesGetCmd.MarkFlagRequired("name")
+
+	// Add flags for cloudspaces get-config
+	cloudspacesGetConfigCmd.Flags().String("name", "", "Cloudspace name (required)")
+	cloudspacesGetConfigCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesGetConfigCmd.Flags().String("file", "", "Output file name (default: <cloudspace_name>.yaml)")
+	cloudspacesGetConfigCmd.MarkFlagRequired("name")
+
+	// Add flags for cloudspaces delete
+	cloudspacesDeleteCmd.Flags().String("name", "", "Cloudspace name (required)")
+	cloudspacesDeleteCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesDeleteCmd.MarkFlagRequired("name")
+	cloudspacesDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
+}
 
 // cloudspacesListCmd represents the cloudspaces list command
 var cloudspacesListCmd = &cobra.Command{
@@ -63,6 +106,345 @@ var cloudspacesListCmd = &cobra.Command{
 	},
 }
 
+// cloudspacesDeleteCmd represents the cloudspaces delete command
+var cloudspacesDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete a cloudspace",
+	Long:  `Delete a cloudspace and all its resources.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, _ := cmd.Flags().GetString("name")
+		if name == "" {
+			return fmt.Errorf("name is required")
+		}
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return err
+		}
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" {
+			if err == nil && cfg.Org != "" {
+				org = cfg.Org
+			}
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		}
+		yes, _ := cmd.Flags().GetBool("yes")
+		if !yes {
+			// Interactive prompt
+			prompt := color.New(color.FgYellow).PrintfFunc()
+			prompt("Are you sure you want to delete cloudspace '%s'? (y/N): ", name)
+
+			var response string
+			_, err := fmt.Scanln(&response)
+			if err != nil || (response != "y" && response != "Y") {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
+		if err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+
+		err = client.GetAPI().DeleteCloudspace(context.Background(), org, name)
+		if err != nil {
+			if rxtspot.IsNotFound(err) {
+				return fmt.Errorf("cloudspace '%s' not found", name)
+			}
+			if rxtspot.IsForbidden(err) {
+				return fmt.Errorf("forbidden: %w", err)
+			}
+			if rxtspot.IsConflict(err) {
+				return fmt.Errorf("conflict: %w", err)
+			}
+			return fmt.Errorf("%w", err)
+		}
+
+		fmt.Printf("Cloudspace '%s' deleted successfully\n", name)
+		return nil
+	},
+}
+
+// cloudspacesCreateCmd represents the cloudspaces create command
+var cloudspacesCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new cloudspace",
+	Long:  `Create a new Rackspace Spot cloudspace (Kubernetes cluster) with optional spot and on-demand node pools.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Get CLI configuration
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get CLI configuration: %w", err)
+		}
+
+		// Initialize client
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
+		if err != nil {
+			return fmt.Errorf("failed to initialize client: %w", err)
+		}
+
+		// Check if we're in interactive mode
+		interactive := isInteractiveMode(cmd)
+
+		// Load parameters based on mode
+		var params *createCloudspaceParams
+		if interactive {
+			// Interactive mode - collect input from user
+			params, err = collectInteractiveInput(client, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to collect interactive input: %w", err)
+			}
+		} else {
+			// Non-interactive mode - load from flags
+			params, err = loadParamsFromFlags(cmd)
+			if err != nil {
+				return fmt.Errorf("failed to load parameters from flags: %w", err)
+			}
+		}
+
+		// Set default values
+		if params.Org == "" && cfg.Org != "" {
+			params.Org = cfg.Org
+		}
+		if params.Region == "" && cfg.Region != "" {
+			params.Region = cfg.Region
+		}
+
+		// Track created resources for cleanup in case of failure
+		createdResources := struct {
+			cloudspaceCreated bool
+			nodePoolsCreated  []struct {
+				name   string
+				isSpot bool
+			}
+		}{
+			nodePoolsCreated: make([]struct {
+				name   string
+				isSpot bool
+			}, 0),
+		}
+
+		// Validate parameters
+		if err := validateCreateParams(params, interactive); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+
+		// Create cloudspace with all required fields
+		cloudspace := rxtspot.CloudSpace{
+			Name:                 params.Name,
+			Org:                  params.Org,
+			Region:               params.Region,
+			KubernetesVersion:    params.KubernetesVersion,
+			CNI:                  params.CNI,
+			PreemptionWebhookURL: params.PreemptionWebhookURL,
+		}
+
+		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
+			return fmt.Errorf("failed to create cloudspace: %w", err)
+		}
+		// Only mark cloudspace as created after successful creation
+		createdResources.cloudspaceCreated = true
+
+		// cleanupResources handles the actual cleanup of resources
+		cleanupResources := func() {
+
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			// Delete all created node pools in reverse order
+			if len(createdResources.nodePoolsCreated) > 0 {
+				for i := len(createdResources.nodePoolsCreated) - 1; i >= 0; i-- {
+					np := createdResources.nodePoolsCreated[i]
+
+					var cleanupErr error
+					if np.isSpot {
+						cleanupErr = client.GetAPI().DeleteSpotNodePool(cleanupCtx, params.Org, np.name)
+					} else {
+						cleanupErr = client.GetAPI().DeleteOnDemandNodePool(cleanupCtx, params.Org, np.name)
+					}
+
+					if cleanupErr != nil {
+						klog.Warningf("Failed to clean up node pool %s: %v", np.name, cleanupErr)
+					}
+				}
+			}
+
+			// Delete the cloudspace
+			if createdResources.cloudspaceCreated {
+				if delErr := client.GetAPI().DeleteCloudspace(cleanupCtx, params.Org, params.Name); delErr != nil {
+					klog.Warningf("Failed to clean up cloudspace %s: %v", params.Name, delErr)
+				}
+			}
+		}
+
+		// Defer cleanup function in case of error
+		defer func() {
+			if r := recover(); r != nil {
+				cleanupResources()
+				panic(r) // Re-throw the panic after cleanup
+			} else if err != nil {
+				if createdResources.cloudspaceCreated {
+					cleanupResources()
+				}
+			}
+		}()
+
+		// Create spot node pools if any
+		for _, pool := range params.SpotNodePools {
+			// Ensure bid price is properly formatted
+			bidPrice, err := validateBidPrice(pool.BidPrice)
+			if err != nil {
+				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
+			}
+
+			// Validate the bid price
+			bidPrice, err = getBidPrice(bidPrice)
+			if err != nil {
+				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
+			}
+			if pool.Name == "" {
+				pool.Name = uuid.NewString()
+			}
+
+			spotPool := rxtspot.SpotNodePool{
+				Name:        pool.Name,
+				Org:         params.Org,
+				Cloudspace:  params.Name,
+				ServerClass: pool.ServerClass,
+				BidPrice:    bidPrice,
+				Desired:     pool.Desired,
+			}
+
+			// Track the pool before creation so we can clean it up if needed
+			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
+				struct {
+					name   string
+					isSpot bool
+				}{name: pool.Name, isSpot: true})
+
+			// Create the spot node pool
+			createErr := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool)
+			if createErr != nil {
+				// Store the original error
+				err = fmt.Errorf("failed to create spot node pool %s: %w", spotPool.Name, createErr)
+				// Explicitly clean up resources before returning
+				cleanupResources()
+				return err
+			}
+
+			// Verify the pool was created successfully
+			if _, verifyErr := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, spotPool.Name); verifyErr != nil {
+				err = fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
+				// Explicitly clean up resources before returning
+				cleanupResources()
+				return err
+			}
+		}
+
+		// Create on-demand node pools if any
+		for _, pool := range params.OnDemandNodePools {
+			if pool.Name == "" {
+				pool.Name = uuid.NewString()
+			}
+			onDemandPool := rxtspot.OnDemandNodePool{
+				Name:        pool.Name,
+				Org:         params.Org,
+				Cloudspace:  params.Name,
+				ServerClass: pool.ServerClass,
+				Desired:     pool.Desired,
+			}
+			// Track the pool before creation so we can clean it up if needed
+			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
+				struct {
+					name   string
+					isSpot bool
+				}{name: pool.Name, isSpot: false})
+
+			// Create the on-demand node pool
+			createErr := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool)
+			if createErr != nil {
+				// Store the original error
+				err = fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
+				// Explicitly clean up resources before returning
+				cleanupResources()
+				return err
+			}
+
+			// Verify the pool was created successfully
+			if _, verifyErr := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, onDemandPool.Name); verifyErr != nil {
+				err = fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
+				// Explicitly clean up resources before returning
+				cleanupResources()
+				return err
+			}
+		}
+
+		cloudspaceGetResponse, err := client.GetAPI().GetCloudspace(context.Background(), params.Org, params.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get cloudspace: %w", err)
+		}
+		// If we got here, everything was successful
+		fmt.Printf("\n%s Successfully created cloudspace '%s' in region '%s'\n",
+			color.GreenString("✓"),
+			color.CyanString(cloudspaceGetResponse.Name),
+			color.CyanString(cloudspaceGetResponse.Region),
+		)
+
+		// Output the created cloudspace details
+		return internal.OutputData(cloudspaceGetResponse, outputFormat)
+	},
+}
+
+// cloudspacesGetCmd represents the cloudspaces get command
+var cloudspacesGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get cloudspace details",
+	Long:  `Get details about a specific cloudspace.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, _ := cmd.Flags().GetString("name")
+		if name == "" {
+			return fmt.Errorf("name is required")
+		}
+
+		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+		org, _ := cmd.Flags().GetString("org")
+		if org == "" && cfg != nil && cfg.Org != "" {
+			org = cfg.Org
+		}
+		if org == "" {
+			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+		}
+
+		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
+		if err != nil {
+			return fmt.Errorf("failed to initialize client: %w", err)
+		}
+
+		cloudspace, err := client.GetAPI().GetCloudspace(context.Background(), org, name)
+		if err != nil {
+			if rxtspot.IsNotFound(err) {
+				return fmt.Errorf("cloudspace '%s' not found", name)
+			}
+			return fmt.Errorf("failed to get cloudspace: %w", err)
+		}
+
+		// Get output format from flags, default to "json"
+		outputFormat, _ := cmd.Flags().GetString("output")
+		if outputFormat == "" {
+			outputFormat = "json"
+		}
+
+		// Use the OutputData function for all output formats
+		return internal.OutputData(cloudspace, outputFormat)
+	},
+}
+
+// cloudspacesGetConfigCmd represents the cloudspaces get-config command
 var cloudspacesGetConfigCmd = &cobra.Command{
 	Use:   "get-config",
 	Short: "Get cloudspace/kubernetes config",
@@ -107,74 +489,22 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to write config to file: %w", err)
 		}
-
-		fmt.Printf("Config has been saved to %s successfully\n", filePath)
+		fmt.Fprintf(os.Stdout, "Config has been saved to %s successfully\n", filePath)
 		return nil
 	},
 }
 
-// validateBidPrice validates and formats a bid price string to ensure it has up to 3 decimal places
-func validateBidPrice(bidPrice string) (string, error) {
-	// Check if it's a valid number
-	val, err := strconv.ParseFloat(bidPrice, 64)
-	if err != nil {
-		return "", fmt.Errorf("bid price must be a valid number")
-	}
-
-	// Ensure it's a positive number
-	if val <= 0 {
-		return "", fmt.Errorf("bid price must be greater than 0")
-	}
-
-	// Format to exactly 3 decimal places
-	formatted := fmt.Sprintf("%.3f", val)
-
-	// Remove trailing zeros after decimal point for cleaner output
-	formatted = strings.TrimRight(formatted, "0")
-	formatted = strings.TrimSuffix(formatted, ".")
-
-	// Ensure we have at least one decimal place if it was a whole number
-	if !strings.Contains(formatted, ".") && val == float64(int64(val)) {
-		formatted = fmt.Sprintf("%s.000", formatted)
-	} else if strings.Count(formatted, ".") > 0 {
-		// Ensure exactly 3 decimal places
-		parts := strings.Split(formatted, ".")
-		if len(parts) == 2 && len(parts[1]) < 3 {
-			formatted = fmt.Sprintf("%s%s", formatted, strings.Repeat("0", 3-len(parts[1])))
-		}
-	}
-
-	return formatted, nil
-}
-
-// parseNodepoolParams parses nodepool parameters in format key1=value1,key2=value2
-func parseNodepoolParams(params string) (map[string]string, error) {
-	if params == "" {
-		return nil, nil
-	}
-	result := make(map[string]string)
-	pairs := strings.Split(params, ",")
-
-	for _, pair := range pairs {
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value", pair)
-		}
-		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-	}
-	return result, nil
-}
-
 // createCloudspaceParams holds all parameters needed for cloudspace creation
 type createCloudspaceParams struct {
-	Name              string                     `json:"name" yaml:"name"`
-	Org               string                     `json:"org" yaml:"org"`
-	Region            string                     `json:"region" yaml:"region"`
-	KubernetesVersion string                     `json:"kubernetesVersion" yaml:"kubernetesVersion"`
-	CNI               string                     `json:"cni" yaml:"cni"`
-	ConfigPath        string                     `json:"-" yaml:"-"`
-	SpotNodePools     []rxtspot.SpotNodePool     `json:"spotNodePools,omitempty" yaml:"spotNodePools,omitempty"`
-	OnDemandNodePools []rxtspot.OnDemandNodePool `json:"onDemandNodePools,omitempty" yaml:"onDemandNodePools,omitempty"`
+	Name                 string                     `json:"name" yaml:"name"`
+	Org                  string                     `json:"org" yaml:"org"`
+	Region               string                     `json:"region" yaml:"region"`
+	KubernetesVersion    string                     `json:"kubernetesVersion" yaml:"kubernetesVersion"`
+	PreemptionWebhookURL string                     `json:"preemptionWebhookURL" yaml:"preemptionWebhookURL"`
+	CNI                  string                     `json:"cni" yaml:"cni"`
+	ConfigPath           string                     `json:"-" yaml:"-"`
+	SpotNodePools        []rxtspot.SpotNodePool     `json:"spotNodePools,omitempty" yaml:"spotNodePools,omitempty"`
+	OnDemandNodePools    []rxtspot.OnDemandNodePool `json:"onDemandNodePools,omitempty" yaml:"onDemandNodePools,omitempty"`
 }
 
 // getBidPrice parses and validates the minimum bid price
@@ -266,7 +596,7 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 	}
 
 	// Node pool configuration
-	var nodePools []map[string]interface{}
+	// var nodePools []map[string]interface{}
 
 	for {
 		// Ask for node pool type
@@ -287,13 +617,13 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 
 		// Generate node pool name
 		nodePoolUUID := uuid.New().String()
-		namePrompt := &survey.Input{
-			Message: fmt.Sprintf("Enter a name for your %s node pool:", strings.ToLower(poolType)),
-			Default: nodePoolUUID,
-		}
-		if err := survey.AskOne(namePrompt, &nodePoolUUID); err != nil || nodePoolUUID == "" {
-			return nil, fmt.Errorf("node pool name is required")
-		}
+		// namePrompt := &survey.Input{
+		// 	Message: fmt.Sprintf("Enter a name for your %s node pool:", strings.ToLower(poolType)),
+		// 	Default: nodePoolUUID,
+		// }
+		// if err := survey.AskOne(namePrompt, &nodePoolUUID); err != nil || nodePoolUUID == "" {
+		// 	return nil, fmt.Errorf("node pool name is required")
+		// }
 
 		// Get node count
 		nodeCount, err := client.PromptForNodeCount("")
@@ -338,13 +668,6 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 				Desired:     desired,
 			}
 			params.SpotNodePools = append(params.SpotNodePools, pool)
-			nodePools = append(nodePools, map[string]interface{}{
-				"type":  "spot",
-				"name":  nodePoolUUID,
-				"class": serverClass,
-				"nodes": desired,
-				"price": bidPrice,
-			})
 		} else {
 			// Add to on-demand node pools
 			pool := rxtspot.OnDemandNodePool{
@@ -354,13 +677,6 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 				OnDemandPricePerHour: onDemandPrice,
 			}
 			params.OnDemandNodePools = append(params.OnDemandNodePools, pool)
-			nodePools = append(nodePools, map[string]interface{}{
-				"type":  "on-demand",
-				"name":  nodePoolUUID,
-				"class": serverClass,
-				"nodes": desired,
-				"price": onDemandPrice,
-			})
 		}
 
 		// Ask to add another node pool
@@ -433,6 +749,7 @@ func validateCreateParams(params *createCloudspaceParams, interactive bool) erro
 
 	// Validate spot node pools' bid prices
 	for i, pool := range params.SpotNodePools {
+		// fmt.Printf("pool spot - %+v \n", pool)
 		if pool.BidPrice == "" {
 			return fmt.Errorf("bid price is required for spot node pool %s", pool.Name)
 		}
@@ -442,20 +759,23 @@ func validateCreateParams(params *createCloudspaceParams, interactive bool) erro
 		}
 		// Update the bid price with the validated and formatted version
 		params.SpotNodePools[i].BidPrice, _ = validateBidPrice(pool.BidPrice)
-		if pool.Name == "" {
-			pool.Name = uuid.New().String()
-		}
+		// if pool.Name == "" {
+		// 	pool.Name = uuid.New().String()
+		// }
+		// fmt.Printf("pool spot - %+v \n", pool)
 	}
 
 	for i, pool := range params.OnDemandNodePools {
+		// fmt.Printf("pool node - %+v \n", pool)
 		if pool.Desired <= 0 {
 			return fmt.Errorf("desired number of nodes must be greater than 0 for on-demand node pool %s", pool.Name)
 		}
 		// Update the desired count with the validated value
 		params.OnDemandNodePools[i].Desired = pool.Desired
-		if pool.Name == "" {
-			pool.Name = uuid.New().String()
-		}
+		// if pool.Name == "" {
+		// 	pool.Name = uuid.New().String()
+		// }
+		// fmt.Printf("pool node - %+v \n", pool)
 	}
 	return nil
 }
@@ -509,6 +829,7 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	params.Org, _ = cmd.Flags().GetString("org")
 	params.Region, _ = cmd.Flags().GetString("region")
 	params.KubernetesVersion, _ = cmd.Flags().GetString("kubernetes-version")
+	params.PreemptionWebhookURL, _ = cmd.Flags().GetString("preemption-webhook-url")
 	params.CNI, _ = cmd.Flags().GetString("cni")
 
 	// Handle node pools - these will be parsed later
@@ -529,7 +850,7 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 		}
 
 		spotPool := rxtspot.SpotNodePool{
-			Name:        poolParams["name"],
+			Name:        uuid.New().String(),
 			Org:         poolParams["org"],
 			Cloudspace:  poolParams["cloudspace"],
 			ServerClass: poolParams["serverclass"],
@@ -552,9 +873,9 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 		}
 
 		onDemandPool := rxtspot.OnDemandNodePool{
+			Name:        uuid.New().String(),
 			Org:         poolParams["org"],
 			Cloudspace:  poolParams["cloudspace"],
-			Name:        poolParams["name"],
 			ServerClass: poolParams["serverclass"],
 			Desired:     desired,
 		}
@@ -569,385 +890,72 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	return params, nil
 }
 
-// cloudspacesCreateCmd represents the cloudspaces create command
-var cloudspacesCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new cloudspace",
-	Long:  `Create a new Rackspace Spot cloudspace (Kubernetes cluster) with optional spot and on-demand node pools.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get CLI configuration
-		cfg, err := config.GetCLIEssentials(cmd)
-		if err != nil {
-			return fmt.Errorf("failed to get CLI configuration: %w", err)
-		}
-
-		// Initialize client
-		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
-		if err != nil {
-			return fmt.Errorf("failed to initialize client: %w", err)
-		}
-
-		// Check if we're in interactive mode
-		interactive := isInteractiveMode(cmd)
-
-		// Load parameters based on mode
-		var params *createCloudspaceParams
-		if interactive {
-			// Interactive mode - collect input from user
-			params, err = collectInteractiveInput(client, cfg)
-			if err != nil {
-				return fmt.Errorf("failed to collect interactive input: %w", err)
-			}
-		} else {
-			// Non-interactive mode - load from flags
-			params, err = loadParamsFromFlags(cmd)
-			if err != nil {
-				return fmt.Errorf("failed to load parameters from flags: %w", err)
-			}
-		}
-
-		// Set default values
-		if params.Org == "" && cfg.Org != "" {
-			params.Org = cfg.Org
-		}
-		if params.Region == "" && cfg.Region != "" {
-			params.Region = cfg.Region
-		}
-
-		// Validate parameters
-		if err := validateCreateParams(params, interactive); err != nil {
-			return fmt.Errorf("validation failed: %w", err)
-		}
-
-		// Create cloudspace with all required fields
-		cloudspace := rxtspot.CloudSpace{
-			Name:                 params.Name,
-			Org:                  params.Org,
-			Region:               params.Region,
-			KubernetesVersion:    params.KubernetesVersion,
-			CNI:                  params.CNI,
-			PreemptionWebhookURL: "", // Empty webhook URL by default
-		}
-		fmt.Printf("cloudspace object to be created - %+v \n", cloudspace)
-		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
-			return fmt.Errorf("failed to create cloudspace: %w", err)
-		}
-
-		// Track created resources for cleanup in case of failure
-		createdResources := struct {
-			cloudspaceCreated bool
-			nodePoolsCreated  []struct {
-				name   string
-				isSpot bool
-			}
-		}{
-			cloudspaceCreated: true,
-			nodePoolsCreated: make([]struct {
-				name   string
-				isSpot bool
-			}, 0),
-		}
-
-		// Defer cleanup function in case of error
-		defer func() {
-			if err != nil && createdResources.cloudspaceCreated {
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-
-				// Delete all created node pools in reverse order
-				for i := len(createdResources.nodePoolsCreated) - 1; i >= 0; i-- {
-					np := createdResources.nodePoolsCreated[i]
-					var cleanupErr error
-					if np.isSpot {
-						cleanupErr = client.GetAPI().DeleteSpotNodePool(cleanupCtx, params.Org, np.name)
-					} else {
-						cleanupErr = client.GetAPI().DeleteOnDemandNodePool(cleanupCtx, params.Org, np.name)
-					}
-					if cleanupErr != nil {
-						klog.Warningf("Failed to clean up node pool %s: %v", np.name, cleanupErr)
-					}
-				}
-
-				// Delete the cloudspace
-				if delErr := client.GetAPI().DeleteCloudspace(cleanupCtx, params.Org, params.Name); delErr != nil {
-					klog.Warningf("Failed to clean up cloudspace %s: %v", params.Name, delErr)
-				}
-
-				fmt.Fprintf(os.Stderr, "\n%s Cleaned up partially created resources due to error\n",
-					color.YellowString("!"),
-				)
-			}
-		}()
-
-		// Create spot node pools if any
-		for _, pool := range params.SpotNodePools {
-			// Ensure bid price is properly formatted
-			bidPrice, err := validateBidPrice(pool.BidPrice)
-			if err != nil {
-				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
-			}
-
-			// Validate the bid price
-			bidPrice, err = getBidPrice(bidPrice)
-			if err != nil {
-				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
-			}
-
-			fmt.Printf("Creating spot node pool %q with server class %q, %d nodes, and bid price $%s...\n",
-				pool.Name, pool.ServerClass, pool.Desired, bidPrice)
-
-			spotPool := rxtspot.SpotNodePool{
-				Name:        pool.Name,
-				Org:         params.Org,
-				Cloudspace:  params.Name,
-				ServerClass: pool.ServerClass,
-				BidPrice:    bidPrice,
-				Desired:     pool.Desired,
-			}
-
-			if err := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool); err != nil {
-				return fmt.Errorf("failed to create spot node pool %s: %w", pool.Name, err)
-			}
-
-			// Track created pool for cleanup
-			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
-				struct {
-					name   string
-					isSpot bool
-				}{name: pool.Name, isSpot: true})
-
-			// Verify the pool was created successfully
-			if _, err := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, pool.Name); err != nil {
-				return fmt.Errorf("failed to verify creation of spot node pool %s: %w", pool.Name, err)
-			}
-		}
-
-		// Create on-demand node pools if any
-		for _, pool := range params.OnDemandNodePools {
-			fmt.Printf("Creating on-demand node pool %q with server class %q and %d nodes...\n",
-				pool.Name, pool.ServerClass, pool.Desired)
-
-			onDemandPool := rxtspot.OnDemandNodePool{
-				Name:        pool.Name,
-				Org:         params.Org,
-				Cloudspace:  params.Name,
-				ServerClass: pool.ServerClass,
-				Desired:     pool.Desired,
-			}
-
-			if err := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool); err != nil {
-				return fmt.Errorf("failed to create on-demand node pool %s: %w", pool.Name, err)
-			}
-
-			// Track created pool for cleanup
-			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
-				struct {
-					name   string
-					isSpot bool
-				}{name: pool.Name, isSpot: false})
-
-			// Verify the pool was created successfully
-			if _, err := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, pool.Name); err != nil {
-				return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", pool.Name, err)
-			}
-		}
-
-		// If we got here, everything was successful
-		fmt.Printf("\n%s Successfully created cloudspace '%s' in region '%s'\n",
-			color.GreenString("✓"),
-			color.CyanString(cloudspace.Name),
-			color.CyanString(cloudspace.Region),
-		)
-
-		// Output the created cloudspace details
-		return internal.OutputData(cloudspace, outputFormat)
-	},
-}
-
 // isInteractiveMode checks if we should run in interactive mode
+// Interactive mode should only be used when no flags are provided at all
 func isInteractiveMode(cmd *cobra.Command) bool {
 	// If --config flag is provided, never use interactive mode
 	if configPath, _ := cmd.Flags().GetString("config"); configPath != "" {
 		return false
 	}
 
-	// If any of the required flags are not set, run in interactive mode
-	requiredFlags := []string{"name", "region"}
-	for _, flag := range requiredFlags {
-		if !cmd.Flags().Changed(flag) {
-			return true
+	// Check if any flags were provided
+	flagSet := make(map[string]bool)
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		flagSet[f.Name] = true
+	})
+
+	// If any flags were provided, don't use interactive mode
+	return len(flagSet) == 0
+}
+
+// validateBidPrice validates and formats a bid price string to ensure it has up to 3 decimal places
+func validateBidPrice(bidPrice string) (string, error) {
+	// Check if it's a valid number
+	val, err := strconv.ParseFloat(bidPrice, 64)
+	if err != nil {
+		return "", fmt.Errorf("bid price must be a valid number")
+	}
+
+	// Ensure it's a positive number
+	if val <= 0 {
+		return "", fmt.Errorf("bid price must be greater than 0")
+	}
+
+	// Format to exactly 3 decimal places
+	formatted := fmt.Sprintf("%.3f", val)
+
+	// Remove trailing zeros after decimal point for cleaner output
+	formatted = strings.TrimRight(formatted, "0")
+	formatted = strings.TrimSuffix(formatted, ".")
+
+	// Ensure we have at least one decimal place if it was a whole number
+	if !strings.Contains(formatted, ".") && val == float64(int64(val)) {
+		formatted = fmt.Sprintf("%s.000", formatted)
+	} else if strings.Count(formatted, ".") > 0 {
+		// Ensure exactly 3 decimal places
+		parts := strings.Split(formatted, ".")
+		if len(parts) == 2 && len(parts[1]) < 3 {
+			formatted = fmt.Sprintf("%s%s", formatted, strings.Repeat("0", 3-len(parts[1])))
 		}
 	}
 
-	// Also check if we have at least one node pool specified
-	spotPools, _ := cmd.Flags().GetStringArray("spot-nodepool")
-	onDemandPools, _ := cmd.Flags().GetStringArray("ondemand-nodepool")
-	if len(spotPools) == 0 && len(onDemandPools) == 0 {
-		return true
+	return formatted, nil
+}
+
+// parseNodepoolParams parses nodepool parameters in format key1=value1,key2=value2
+func parseNodepoolParams(params string) (map[string]string, error) {
+	if params == "" {
+		return nil, nil
 	}
+	result := make(map[string]string)
+	pairs := strings.Split(params, ",")
 
-	return false
-}
-
-// cloudspacesGetCmd represents the cloudspaces get command
-var cloudspacesGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get cloudspace details",
-	Long:  `Get details about a specific cloudspace.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := cmd.Flags().GetString("name")
-		if name == "" {
-			return fmt.Errorf("name is required")
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value", pair)
 		}
-
-		cfg, err := config.GetCLIEssentials(cmd)
-		if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
-		}
-
-		org, _ := cmd.Flags().GetString("org")
-		if org == "" && cfg != nil && cfg.Org != "" {
-			org = cfg.Org
-		}
-		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
-		}
-
-		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
-		if err != nil {
-			return fmt.Errorf("failed to initialize client: %w", err)
-		}
-
-		cloudspace, err := client.GetAPI().GetCloudspace(context.Background(), org, name)
-		if err != nil {
-			if rxtspot.IsNotFound(err) {
-				return fmt.Errorf("cloudspace '%s' not found", name)
-			}
-			return fmt.Errorf("failed to get cloudspace: %w", err)
-		}
-
-		fmt.Printf("\nCloudspace Details:\n")
-		fmt.Printf("Name:              %s\n", color.CyanString(cloudspace.Name))
-		fmt.Printf("Status:            %s\n", colorStatus(cloudspace.Status))
-		fmt.Printf("Region:            %s\n", cloudspace.Region)
-		fmt.Printf("Kubernetes Version: %s\n", cloudspace.KubernetesVersion)
-		fmt.Printf("CNI:               %s\n", cloudspace.CNI)
-
-		return nil
-	},
-}
-
-// Helper function to color status
-func colorStatus(status string) string {
-	switch strings.ToLower(status) {
-	case "active":
-		return color.GreenString(status)
-	case "creating", "updating":
-		return color.YellowString(status)
-	case "failed", "error":
-		return color.RedString(status)
-	default:
-		return status
+		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
-}
-
-// cloudspacesDeleteCmd represents the cloudspaces delete command
-var cloudspacesDeleteCmd = &cobra.Command{
-	Use:   "delete",
-	Short: "Delete a cloudspace",
-	Long:  `Delete a cloudspace and all its resources.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := cmd.Flags().GetString("name")
-		if name == "" {
-			return fmt.Errorf("name is required")
-		}
-		cfg, err := config.GetCLIEssentials(cmd)
-		if err != nil {
-			return err
-		}
-		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			if err == nil && cfg.Org != "" {
-				org = cfg.Org
-			}
-		}
-		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
-		}
-		yes, _ := cmd.Flags().GetBool("yes")
-		if !yes {
-			// Interactive prompt
-			prompt := color.New(color.FgYellow).PrintfFunc()
-			prompt("Are you sure you want to delete cloudspace '%s'? (y/N): ", name)
-
-			var response string
-			_, err := fmt.Scanln(&response)
-			if err != nil || (response != "y" && response != "Y") {
-				fmt.Println("Aborted.")
-				return nil
-			}
-		}
-		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
-		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
-		}
-
-		err = client.GetAPI().DeleteCloudspace(context.Background(), org, name)
-		if err != nil {
-			if rxtspot.IsNotFound(err) {
-				return fmt.Errorf("cloudspace '%s' not found", name)
-			}
-			if rxtspot.IsForbidden(err) {
-				return fmt.Errorf("forbidden: %w", err)
-			}
-			if rxtspot.IsConflict(err) {
-				return fmt.Errorf("conflict: %w", err)
-			}
-			return fmt.Errorf("%w", err)
-		}
-
-		fmt.Printf("Cloudspace '%s' deleted successfully\n", name)
-		return nil
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(cloudspacesCmd)
-	cloudspacesCmd.AddCommand(cloudspacesListCmd)
-	cloudspacesCmd.AddCommand(cloudspacesCreateCmd)
-	cloudspacesCmd.AddCommand(cloudspacesGetCmd)
-	cloudspacesCmd.AddCommand(cloudspacesDeleteCmd)
-	cloudspacesCmd.AddCommand(cloudspacesGetConfigCmd)
-
-	// Add flags for cloudspaces list
-	cloudspacesListCmd.Flags().String("org", "", "Organization ID")
-	cloudspacesListCmd.Flags().StringP("output", "o", "json", "Output format (json, table, yaml)")
-
-	// Add flags for cloudspaces create
-	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name")
-	cloudspacesCreateCmd.Flags().String("org", "", "Organization ID")
-	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
-	cloudspacesCreateCmd.Flags().StringP("kubernetes-version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
-
-	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, "Spot nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)")
-	cloudspacesCreateCmd.Flags().StringArray("ondemand-nodepool", []string{}, "Ondemand nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord)")
-	cloudspacesCreateCmd.Flags().String("config", "", "Path to config file (YAML or JSON)")
-	cloudspacesCreateCmd.Flags().StringP("cni", "", "calico", "CNI (default: calico)")
-
-	// Add flags for cloudspaces get
-	cloudspacesGetCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesGetCmd.Flags().String("org", "", "Organization ID")
-	cloudspacesGetCmd.MarkFlagRequired("name")
-
-	// Add flags for cloudspaces get-config
-	cloudspacesGetConfigCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesGetConfigCmd.Flags().String("org", "", "Organization ID")
-	cloudspacesGetConfigCmd.Flags().String("file", "", "Output file name (default: <cloudspace_name>.yaml)")
-	cloudspacesGetConfigCmd.MarkFlagRequired("name")
-
-	// Add flags for cloudspaces delete
-	cloudspacesDeleteCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesDeleteCmd.Flags().String("org", "", "Organization ID")
-	cloudspacesDeleteCmd.MarkFlagRequired("name")
-	cloudspacesDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
+	return result, nil
 }

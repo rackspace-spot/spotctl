@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotctl/internal"
 	config "github.com/rackspace-spot/spotctl/pkg"
@@ -14,9 +15,10 @@ import (
 
 // nodepoolsCmd represents the nodepools command
 var nodepoolsCmd = &cobra.Command{
-	Use:   "nodepools",
-	Short: "Manage node pools",
-	Long:  `Manage Rackspace Spot node pools (both spot and on-demand).`,
+	Use:     "nodepools",
+	Short:   "Manage node pools",
+	Long:    `Manage Rackspace Spot node pools (both spot and on-demand).`,
+	Aliases: []string{"np", "nodepool"},
 }
 
 // spotCmd represents the spot nodepools command
@@ -31,6 +33,91 @@ var ondemandCmd = &cobra.Command{
 	Use:   "ondemand",
 	Short: "Manage on-demand node pools",
 	Long:  `Manage on-demand node pools in cloudspaces.`,
+}
+
+func init() {
+	rootCmd.AddCommand(nodepoolsCmd)
+	nodepoolsCmd.AddCommand(spotCmd)
+	nodepoolsCmd.AddCommand(ondemandCmd)
+
+	// Add spot subcommands
+	spotCmd.AddCommand(spotListCmd)
+	spotCmd.AddCommand(spotDeleteCmd)
+	spotCmd.AddCommand(spotGetCmd)
+	spotCmd.AddCommand(spotUpdateCmd)
+	spotCmd.AddCommand(spotCreateCmd)
+
+	// Add ondemand subcommands
+	ondemandCmd.AddCommand(ondemandListCmd)
+	ondemandCmd.AddCommand(ondemandCreateCmd)
+	ondemandCmd.AddCommand(ondemandGetCmd)
+	ondemandCmd.AddCommand(ondemandUpdateCmd)
+	ondemandCmd.AddCommand(ondemandDeleteCmd)
+
+	spotGetCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	spotGetCmd.MarkFlagRequired("name")
+
+	// Flags for spot list
+	spotListCmd.Flags().String("org", "", "Organization (required)")
+	//spotListCmd.MarkFlagRequired("org")
+	spotListCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	spotListCmd.MarkFlagRequired("cloudspace")
+
+	// Flags for spot create
+	// spotCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	spotCreateCmd.Flags().String("org", "", "Organization ID")
+	spotCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	spotCreateCmd.Flags().String("serverclass", "", "Server class (required)")
+	spotCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
+	spotCreateCmd.Flags().String("bidprice", "", "Maximum bid price (required)")
+	spotCreateCmd.MarkFlagRequired("name")
+	spotCreateCmd.MarkFlagRequired("cloudspace")
+	spotCreateCmd.MarkFlagRequired("serverclass")
+	spotCreateCmd.MarkFlagRequired("desired")
+	spotCreateCmd.MarkFlagRequired("bidprice")
+
+	spotUpdateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	spotUpdateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	spotUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
+	spotUpdateCmd.Flags().String("bidprice", "", "Maximum bid price (optional)")
+	spotUpdateCmd.Flags().String("org", "", "Organization ID")
+	spotUpdateCmd.MarkFlagRequired("name")
+	spotUpdateCmd.MarkFlagRequired("cloudspace")
+
+	spotDeleteCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	spotDeleteCmd.MarkFlagRequired("name")
+	spotDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
+
+	// Flags for ondemand list
+	ondemandListCmd.Flags().String("org", "", "Organization ID")
+	ondemandListCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	ondemandListCmd.MarkFlagRequired("cloudspace")
+
+	ondemandGetCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	ondemandGetCmd.MarkFlagRequired("name")
+
+	// Flags for ondemand create
+	// ondemandCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	ondemandCreateCmd.Flags().String("org", "", "Organization ID")
+	ondemandCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	ondemandCreateCmd.Flags().String("serverclass", "", "Server class (required)")
+	ondemandCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
+	ondemandCreateCmd.MarkFlagRequired("name")
+	ondemandCreateCmd.MarkFlagRequired("cloudspace")
+	ondemandCreateCmd.MarkFlagRequired("serverclass")
+	ondemandCreateCmd.MarkFlagRequired("desired")
+
+	ondemandUpdateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	ondemandUpdateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
+	ondemandUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
+	ondemandUpdateCmd.Flags().String("org", "", "Organization ID")
+	ondemandUpdateCmd.MarkFlagRequired("name")
+	ondemandUpdateCmd.MarkFlagRequired("cloudspace")
+
+	ondemandDeleteCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
+	ondemandDeleteCmd.MarkFlagRequired("name")
+	ondemandDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
+
 }
 
 // spotListCmd represents the spot list command
@@ -168,7 +255,8 @@ var spotCreateCmd = &cobra.Command{
 	Short: "Create a spot node pool",
 	Long:  `Create a new spot node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := cmd.Flags().GetString("name")
+		// name, _ := cmd.Flags().GetString("name")
+		name := uuid.New().String()
 		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
@@ -327,7 +415,8 @@ var ondemandCreateCmd = &cobra.Command{
 	Short: "Create an on-demand node pool",
 	Long:  `Create a new on-demand node pool in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := cmd.Flags().GetString("name")
+		// name, _ := cmd.Flags().GetString("name")
+		name := uuid.New().String()
 		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
 			return err
@@ -525,89 +614,4 @@ var ondemandDeleteCmd = &cobra.Command{
 
 		return nil
 	},
-}
-
-func init() {
-	rootCmd.AddCommand(nodepoolsCmd)
-	nodepoolsCmd.AddCommand(spotCmd)
-	nodepoolsCmd.AddCommand(ondemandCmd)
-
-	// Add spot subcommands
-	spotCmd.AddCommand(spotListCmd)
-	spotCmd.AddCommand(spotDeleteCmd)
-	spotCmd.AddCommand(spotGetCmd)
-	spotCmd.AddCommand(spotUpdateCmd)
-	spotCmd.AddCommand(spotCreateCmd)
-
-	// Add ondemand subcommands
-	ondemandCmd.AddCommand(ondemandListCmd)
-	ondemandCmd.AddCommand(ondemandCreateCmd)
-	ondemandCmd.AddCommand(ondemandGetCmd)
-	ondemandCmd.AddCommand(ondemandUpdateCmd)
-	ondemandCmd.AddCommand(ondemandDeleteCmd)
-
-	spotGetCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	spotGetCmd.MarkFlagRequired("name")
-
-	// Flags for spot list
-	spotListCmd.Flags().String("org", "", "Organization (required)")
-	//spotListCmd.MarkFlagRequired("org")
-	spotListCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	spotListCmd.MarkFlagRequired("cloudspace")
-
-	// Flags for spot create
-	spotCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	spotCreateCmd.Flags().String("org", "", "Organization ID")
-	spotCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	spotCreateCmd.Flags().String("serverclass", "", "Server class (required)")
-	spotCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
-	spotCreateCmd.Flags().String("bidprice", "", "Maximum bid price (required)")
-	spotCreateCmd.MarkFlagRequired("name")
-	spotCreateCmd.MarkFlagRequired("cloudspace")
-	spotCreateCmd.MarkFlagRequired("serverclass")
-	spotCreateCmd.MarkFlagRequired("desired")
-	spotCreateCmd.MarkFlagRequired("bidprice")
-
-	spotUpdateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	spotUpdateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	spotUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
-	spotUpdateCmd.Flags().String("bidprice", "", "Maximum bid price (optional)")
-	spotUpdateCmd.Flags().String("org", "", "Organization ID")
-	spotUpdateCmd.MarkFlagRequired("name")
-	spotUpdateCmd.MarkFlagRequired("cloudspace")
-
-	spotDeleteCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	spotDeleteCmd.MarkFlagRequired("name")
-	spotDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
-
-	// Flags for ondemand list
-	ondemandListCmd.Flags().String("org", "", "Organization ID")
-	ondemandListCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	ondemandListCmd.MarkFlagRequired("cloudspace")
-
-	ondemandGetCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	ondemandGetCmd.MarkFlagRequired("name")
-
-	// Flags for ondemand create
-	ondemandCreateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	ondemandCreateCmd.Flags().String("org", "", "Organization ID")
-	ondemandCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	ondemandCreateCmd.Flags().String("serverclass", "", "Server class (required)")
-	ondemandCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
-	ondemandCreateCmd.MarkFlagRequired("name")
-	ondemandCreateCmd.MarkFlagRequired("cloudspace")
-	ondemandCreateCmd.MarkFlagRequired("serverclass")
-	ondemandCreateCmd.MarkFlagRequired("desired")
-
-	ondemandUpdateCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	ondemandUpdateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
-	ondemandUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
-	ondemandUpdateCmd.Flags().String("org", "", "Organization ID")
-	ondemandUpdateCmd.MarkFlagRequired("name")
-	ondemandUpdateCmd.MarkFlagRequired("cloudspace")
-
-	ondemandDeleteCmd.Flags().String("name", "", "Node pool name (Note: It should be a valid lower case UUID) (required)")
-	ondemandDeleteCmd.MarkFlagRequired("name")
-	ondemandDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
-
 }
