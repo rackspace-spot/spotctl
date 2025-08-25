@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/pflag"
 
@@ -210,21 +209,6 @@ var cloudspacesCreateCmd = &cobra.Command{
 		if params.Region == "" && cfg.Region != "" {
 			params.Region = cfg.Region
 		}
-
-		// Track created resources for cleanup in case of failure
-		createdResources := struct {
-			cloudspaceCreated bool
-			nodePoolsCreated  []struct {
-				name   string
-				isSpot bool
-			}
-		}{
-			nodePoolsCreated: make([]struct {
-				name   string
-				isSpot bool
-			}, 0),
-		}
-
 		// Validate parameters
 		if err := validateCreateParams(params, interactive); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
@@ -243,52 +227,6 @@ var cloudspacesCreateCmd = &cobra.Command{
 		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
-		// Only mark cloudspace as created after successful creation
-		createdResources.cloudspaceCreated = true
-
-		// cleanupResources handles the actual cleanup of resources
-		cleanupResources := func() {
-
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			// Delete all created node pools in reverse order
-			if len(createdResources.nodePoolsCreated) > 0 {
-				for i := len(createdResources.nodePoolsCreated) - 1; i >= 0; i-- {
-					np := createdResources.nodePoolsCreated[i]
-
-					var cleanupErr error
-					if np.isSpot {
-						cleanupErr = client.GetAPI().DeleteSpotNodePool(cleanupCtx, params.Org, np.name)
-					} else {
-						cleanupErr = client.GetAPI().DeleteOnDemandNodePool(cleanupCtx, params.Org, np.name)
-					}
-
-					if cleanupErr != nil {
-						klog.Warningf("Failed to clean up node pool %s: %v", np.name, cleanupErr)
-					}
-				}
-			}
-
-			// Delete the cloudspace
-			if createdResources.cloudspaceCreated {
-				if delErr := client.GetAPI().DeleteCloudspace(cleanupCtx, params.Org, params.Name); delErr != nil {
-					klog.Warningf("Failed to clean up cloudspace %s: %v", params.Name, delErr)
-				}
-			}
-		}
-
-		// Defer cleanup function in case of error
-		defer func() {
-			if r := recover(); r != nil {
-				cleanupResources()
-				panic(r) // Re-throw the panic after cleanup
-			} else if err != nil {
-				if createdResources.cloudspaceCreated {
-					cleanupResources()
-				}
-			}
-		}()
 
 		// Create spot node pools if any
 		for _, pool := range params.SpotNodePools {
@@ -316,28 +254,18 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Desired:     pool.Desired,
 			}
 
-			// Track the pool before creation so we can clean it up if needed
-			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
-				struct {
-					name   string
-					isSpot bool
-				}{name: pool.Name, isSpot: true})
-
 			// Create the spot node pool
 			createErr := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool)
 			if createErr != nil {
-				// Store the original error
 				err = fmt.Errorf("failed to create spot node pool %s: %w", spotPool.Name, createErr)
-				// Explicitly clean up resources before returning
-				cleanupResources()
+				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				return err
 			}
 
 			// Verify the pool was created successfully
 			if _, verifyErr := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, spotPool.Name); verifyErr != nil {
 				err = fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
-				// Explicitly clean up resources before returning
-				cleanupResources()
+				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				return err
 			}
 		}
@@ -354,28 +282,19 @@ var cloudspacesCreateCmd = &cobra.Command{
 				ServerClass: pool.ServerClass,
 				Desired:     pool.Desired,
 			}
-			// Track the pool before creation so we can clean it up if needed
-			createdResources.nodePoolsCreated = append(createdResources.nodePoolsCreated,
-				struct {
-					name   string
-					isSpot bool
-				}{name: pool.Name, isSpot: false})
 
 			// Create the on-demand node pool
 			createErr := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool)
 			if createErr != nil {
-				// Store the original error
 				err = fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
-				// Explicitly clean up resources before returning
-				cleanupResources()
+				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				return err
 			}
 
 			// Verify the pool was created successfully
 			if _, verifyErr := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, onDemandPool.Name); verifyErr != nil {
 				err = fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
-				// Explicitly clean up resources before returning
-				cleanupResources()
+				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				return err
 			}
 		}

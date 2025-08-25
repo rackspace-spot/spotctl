@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
@@ -25,9 +26,23 @@ type ClientConfig struct {
 
 // DefaultConfig returns a default ClientConfig with sensible defaults
 func DefaultConfig() ClientConfig {
+
+	var baseURL string
+	var authURL string
+	if os.Getenv("SPOT_BASE_URL") != "" {
+		baseURL = os.Getenv("SPOT_BASE_URL")
+	} else {
+		baseURL = "https://spot.rackspace.com"
+	}
+	if os.Getenv("SPOT_AUTH_URL") != "" {
+		authURL = os.Getenv("SPOT_AUTH_URL")
+	} else {
+		authURL = "https://login.spot.rackspace.com"
+	}
+
 	return ClientConfig{
-		BaseURL:  "https://spot.rackspace.com",
-		OAuthURL: "https://login.spot.rackspace.com",
+		BaseURL:  baseURL,
+		OAuthURL: authURL,
 		Timeout:  30 * time.Second,
 	}
 }
