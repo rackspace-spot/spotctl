@@ -24,6 +24,15 @@ import (
 	// "sigs.k8s.io/yaml"
 )
 
+const HKG_HKG_1 = "hkg-hkg-1"
+const US_CENTRAL_ORD_1 = "us-central-ord-1"
+const AUS_SYD_1 = "aus-syd-1"
+const UK_LON_1 = "uk-lon-1"
+const US_EAST_IAD_1 = "us-east-iad-1"
+const US_CENTRAL_DFW_1 = "us-central-dfw-1"
+const US_CENTRAL_DFW_2 = "us-central-dfw-2"
+const US_WEST_SJC_1 = "us-west-sjc-1"
+
 // cloudspacesCmd represents the cloudspaces command
 var cloudspacesCmd = &cobra.Command{
 	Use:     "cloudspaces",
@@ -227,7 +236,6 @@ var cloudspacesCreateCmd = &cobra.Command{
 		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
-
 		// Create spot node pools if any
 		for _, pool := range params.SpotNodePools {
 			// Ensure bid price is properly formatted
@@ -257,15 +265,16 @@ var cloudspacesCreateCmd = &cobra.Command{
 			// Create the spot node pool
 			createErr := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool)
 			if createErr != nil {
-				err = fmt.Errorf("failed to create spot node pool %s: %w", spotPool.Name, createErr)
 				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
-				return err
+				if err != nil {
+					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
+				}
+				return fmt.Errorf("failed to create spot node pool %s: %w", spotPool.Name, createErr)
 			}
 
 			// Verify the pool was created successfully
 			if _, verifyErr := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, spotPool.Name); verifyErr != nil {
 				err = fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				return err
 			}
 		}
@@ -286,16 +295,16 @@ var cloudspacesCreateCmd = &cobra.Command{
 			// Create the on-demand node pool
 			createErr := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool)
 			if createErr != nil {
-				err = fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
 				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
-				return err
+				if err != nil {
+					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
+				}
+				return fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
 			}
 
 			// Verify the pool was created successfully
 			if _, verifyErr := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, onDemandPool.Name); verifyErr != nil {
-				err = fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
-				return err
+				return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
 			}
 		}
 
@@ -427,7 +436,6 @@ type createCloudspaceParams struct {
 }
 
 // getBidPrice parses and validates the minimum bid price
-// It returns the price as a string with proper formatting
 func getBidPrice(priceStr string) (string, error) {
 	if priceStr == "" {
 		return "", fmt.Errorf("empty price")
@@ -513,10 +521,6 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to select CNI: %w", err)
 	}
-
-	// Node pool configuration
-	// var nodePools []map[string]interface{}
-
 	for {
 		// Ask for node pool type
 		poolType := ""
@@ -536,14 +540,6 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 
 		// Generate node pool name
 		nodePoolUUID := uuid.New().String()
-		// namePrompt := &survey.Input{
-		// 	Message: fmt.Sprintf("Enter a name for your %s node pool:", strings.ToLower(poolType)),
-		// 	Default: nodePoolUUID,
-		// }
-		// if err := survey.AskOne(namePrompt, &nodePoolUUID); err != nil || nodePoolUUID == "" {
-		// 	return nil, fmt.Errorf("node pool name is required")
-		// }
-
 		// Get node count
 		nodeCount, err := client.PromptForNodeCount("")
 		if err != nil {
@@ -659,6 +655,11 @@ func validateCreateParams(params *createCloudspaceParams, interactive bool) erro
 
 	if params.Region == "" {
 		return fmt.Errorf("region is required")
+
+	}
+
+	if !isValidRegion(params.Region) {
+		return fmt.Errorf("region %s is not valid. Available regions: %s, %s, %s, %s, %s, %s, %s, %s", params.Region, US_CENTRAL_ORD_1, HKG_HKG_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1)
 	}
 
 	// Require at least one node pool in non-interactive mode
@@ -668,7 +669,6 @@ func validateCreateParams(params *createCloudspaceParams, interactive bool) erro
 
 	// Validate spot node pools' bid prices
 	for i, pool := range params.SpotNodePools {
-		// fmt.Printf("pool spot - %+v \n", pool)
 		if pool.BidPrice == "" {
 			return fmt.Errorf("bid price is required for spot node pool %s", pool.Name)
 		}
@@ -676,25 +676,14 @@ func validateCreateParams(params *createCloudspaceParams, interactive bool) erro
 		if err != nil {
 			return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
 		}
-		// Update the bid price with the validated and formatted version
 		params.SpotNodePools[i].BidPrice, _ = validateBidPrice(pool.BidPrice)
-		// if pool.Name == "" {
-		// 	pool.Name = uuid.New().String()
-		// }
-		// fmt.Printf("pool spot - %+v \n", pool)
 	}
 
 	for i, pool := range params.OnDemandNodePools {
-		// fmt.Printf("pool node - %+v \n", pool)
 		if pool.Desired <= 0 {
 			return fmt.Errorf("desired number of nodes must be greater than 0 for on-demand node pool %s", pool.Name)
 		}
-		// Update the desired count with the validated value
 		params.OnDemandNodePools[i].Desired = pool.Desired
-		// if pool.Name == "" {
-		// 	pool.Name = uuid.New().String()
-		// }
-		// fmt.Printf("pool node - %+v \n", pool)
 	}
 	return nil
 }
@@ -877,4 +866,14 @@ func parseNodepoolParams(params string) (map[string]string, error) {
 		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
 	return result, nil
+}
+
+func isValidRegion(region string) bool {
+
+	switch region {
+	case HKG_HKG_1, US_CENTRAL_ORD_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1:
+		return true
+	default:
+		return false
+	}
 }

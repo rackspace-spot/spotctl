@@ -1,9 +1,8 @@
 # Rackspace Spot CLI (spotctl)
 
-A command-line interface for managing Rackspace Spot resources with full CRUD operations for all resource types including cloudspaces, node pools, organizations, and more.
+A command-line tool to manage Rackspace Spot resources including cloudspaces, node pools, organizations, and more.
 
 ## Features
-
 - Complete resource lifecycle management
 - Multiple output formats (JSON, YAML, Table)
 - OAuth2 authentication
@@ -15,39 +14,24 @@ A command-line interface for managing Rackspace Spot resources with full CRUD op
 
 ### Prerequisites
 
-- Go 1.16 or later
-- Rackspace Spot API credentials
+- User should have access to Rackspace Spot Organization.
+- User should have Refresh Token for the corresponding Organization.
 
-### Option 1: Install using Go
+Download the binary from the releases page: https://github.com/rackspace-spot/spotctl/releases
 
+Move the binary to a directory in your PATH, for example:
 ```bash
-# Install the latest version
-go install github.com/rackspace-spot/spotctl@latest
-
-# Verify installation
-spotctl --version
+sudo mv spotctl /usr/local/bin/
 ```
 
-### Option 2: Build from Source
-
+Verify installation:
 ```bash
-# Clone the repository
-git clone https://github.com/rackspace-spot/spotctl.git
-cd spotctl
-
-# Build the binary
-go build -o spotctl
-
-# Move to a directory in your PATH
-sudo mv spotctl /usr/local/bin/
-
-# Verify installation
-spotctl --help
+spotctl --version
 ```
 
 ## Configuration
 
-Before using spotctl, you need to configure your credentials: You need pass the organization, region and refresh token.
+In order to use spotctl, you need to configure your spotctl: You need pass the organization, region and refresh token.
 
 ```bash
 # Run the interactive configuration wizard
@@ -100,6 +84,8 @@ spotctl cloudspaces list
 ```bash
 spotctl cloudspaces create --name my-cluster --region us-east-1 
 ```
+
+[![Video preview](tools/interactive-cloudspace-creation.gif)](tools/interactive-cloudspace-creation.webm)
 
 #### Config File
 ```bash
@@ -265,6 +251,11 @@ Ondemand Nodepool Operations
 
 
 
-## License
 
-Apache License 2.0
+## 🧑‍💻 Support
+For documentation, please refer to the [official Rackspace Spot documentation](https://spot.rackspace.com/docs/en). For support, ask your questions in the [Rackspace community discussions](https://github.com/rackerlabs/spot/discussions), or drop us an email.
+
+## 📜 License
+**Copyright © Rackspace US, Inc. or its affiliates. All Rights Reserved.**  
+
+`SPDX-License-Identifier: Apache-2.0`

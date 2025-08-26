@@ -59,13 +59,14 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		HTTPClient:   &http.Client{Timeout: cfg.Timeout},
 		RefreshToken: cfg.RefreshToken,
 		AccessToken:  cfg.AccessToken,
-		Timeout:      cfg.Timeout,
+	}
+	client, err := rxtspot.NewSpotClient(&sdkCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
-	client := rxtspot.NewSpotClient(sdkCfg)
-
 	// Let the SDK handle token validation and refresh
-	_, err := client.Authenticate(context.Background())
+	_, err = client.Authenticate(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to authenticate: %w", err)
 	}
