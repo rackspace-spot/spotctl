@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/google/uuid"
@@ -12,6 +13,35 @@ import (
 	config "github.com/rackspace-spot/spotctl/pkg"
 	"github.com/spf13/cobra"
 )
+
+// parseCustomLabels parses a comma-separated string of key=value pairs into a map
+func parseCustomLabels(labelsStr string) (map[string]string, error) {
+	labels := make(map[string]string)
+	if labelsStr == "" {
+		return labels, nil
+	}
+
+	pairs := strings.Split(labelsStr, ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid label format: %s, expected key=value", pair)
+		}
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		if key == "" {
+			return nil, fmt.Errorf("label key cannot be empty in pair: %s", pair)
+		}
+		labels[key] = value
+	}
+
+	return labels, nil
+}
+
+// parseCustomAnnotations parses a comma-separated string of key=value pairs into a map
+func parseCustomAnnotations(annotationsStr string) (map[string]string, error) {
+	return parseCustomLabels(annotationsStr) // Same parsing logic as labels
+}
 
 // nodepoolsCmd represents the nodepools command
 var nodepoolsCmd = &cobra.Command{
@@ -70,6 +100,9 @@ func init() {
 	spotCreateCmd.Flags().String("serverclass", "", "Server class (required)")
 	spotCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
 	spotCreateCmd.Flags().String("bidprice", "", "Maximum bid price (required)")
+	spotCreateCmd.Flags().String("custom-labels", "", "Custom Labels to be added on the spot nodepool. eg: --custom-labels key1=value1,key2=value2")
+	spotCreateCmd.Flags().String("custom-annotations", "", "Custom Annotations to be added to the spot nodepool. eg: --custom-annotations key1=value1,key2=value2")
+	spotCreateCmd.Flags().String("custom-taints", "", "Custom taints to be added to the spot nodepool. eg: --custom-taints key1=value1,key2=value2")
 	spotCreateCmd.MarkFlagRequired("name")
 	spotCreateCmd.MarkFlagRequired("cloudspace")
 	spotCreateCmd.MarkFlagRequired("serverclass")
@@ -81,6 +114,9 @@ func init() {
 	spotUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
 	spotUpdateCmd.Flags().String("bidprice", "", "Maximum bid price (optional)")
 	spotUpdateCmd.Flags().String("org", "", "Organization ID")
+	spotUpdateCmd.Flags().String("custom-labels", "", "Custom Labels to be added on the spot nodepool. eg: --custom-labels key1=value1,key2=value2")
+	spotUpdateCmd.Flags().String("custom-annotations", "", "Custom Annotations to be added to the spot nodepool. eg: --custom-annotations key1=value1,key2=value2")
+	spotUpdateCmd.Flags().String("custom-taints", "", "Custom taints to be added to the spot nodepool. eg: --custom-taints key1=value1,key2=value2")
 	spotUpdateCmd.MarkFlagRequired("name")
 	spotUpdateCmd.MarkFlagRequired("cloudspace")
 
@@ -102,6 +138,9 @@ func init() {
 	ondemandCreateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	ondemandCreateCmd.Flags().String("serverclass", "", "Server class (required)")
 	ondemandCreateCmd.Flags().String("desired", "", "Desired number of nodes (required)")
+	ondemandCreateCmd.Flags().String("custom-labels", "", "Custom Labels to be added on the spot nodepool. eg: --custom-labels key1=value1,key2=value2")
+	ondemandCreateCmd.Flags().String("custom-annotations", "", "Custom Annotations to be added to the spot nodepool. eg: --custom-annotations key1=value1,key2=value2")
+	ondemandCreateCmd.Flags().String("custom-taints", "", "Custom taints to be added to the spot nodepool. eg: --custom-taints key1=value1,key2=value2")
 	ondemandCreateCmd.MarkFlagRequired("name")
 	ondemandCreateCmd.MarkFlagRequired("cloudspace")
 	ondemandCreateCmd.MarkFlagRequired("serverclass")
@@ -111,6 +150,9 @@ func init() {
 	ondemandUpdateCmd.Flags().String("cloudspace", "", "Cloudspace name (required)")
 	ondemandUpdateCmd.Flags().String("desired", "", "Desired number of nodes (optional)")
 	ondemandUpdateCmd.Flags().String("org", "", "Organization ID")
+	ondemandUpdateCmd.Flags().String("custom-labels", "", "Custom Labels to be added on the spot nodepool. eg: --custom-labels key1=value1,key2=value2")
+	ondemandUpdateCmd.Flags().String("custom-annotations", "", "Custom Annotations to be added to the spot nodepool. eg: --custom-annotations key1=value1,key2=value2")
+	ondemandUpdateCmd.Flags().String("custom-taints", "", "Custom taints to be added to the spot nodepool. eg: --custom-taints key1=value1,key2=value2")
 	ondemandUpdateCmd.MarkFlagRequired("name")
 	ondemandUpdateCmd.MarkFlagRequired("cloudspace")
 
@@ -274,9 +316,23 @@ var spotCreateCmd = &cobra.Command{
 		serverClass, _ := cmd.Flags().GetString("serverclass")
 		desiredStr, _ := cmd.Flags().GetString("desired")
 		bidPrice, _ := cmd.Flags().GetString("bidprice")
+		customLabelsStr, _ := cmd.Flags().GetString("custom-labels")
+		customAnnotationsStr, _ := cmd.Flags().GetString("custom-annotations")
 
 		if name == "" || cloudspace == "" || serverClass == "" || desiredStr == "" || bidPrice == "" {
 			return fmt.Errorf("name, cloudspace, serverclass, desired, and bidprice are required")
+		}
+
+		// Parse custom labels
+		customLabels, err := parseCustomLabels(customLabelsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-labels format: %w", err)
+		}
+
+		// Parse custom annotations
+		customAnnotations, err := parseCustomAnnotations(customAnnotationsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-annotations format: %w", err)
 		}
 
 		desired, err := strconv.Atoi(desiredStr)
@@ -290,12 +346,14 @@ var spotCreateCmd = &cobra.Command{
 		}
 
 		pool := &rxtspot.SpotNodePool{
-			Name:        name,
-			Org:         org,
-			Cloudspace:  cloudspace,
-			ServerClass: serverClass,
-			Desired:     desired,
-			BidPrice:    bidPrice,
+			Name:              name,
+			Org:               org,
+			Cloudspace:        cloudspace,
+			ServerClass:       serverClass,
+			Desired:           desired,
+			BidPrice:          bidPrice,
+			CustomLabels:      customLabels,
+			CustomAnnotations: customAnnotations,
 		}
 
 		err = client.GetAPI().CreateSpotNodePool(context.Background(), org, *pool)
@@ -336,14 +394,30 @@ var spotUpdateCmd = &cobra.Command{
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		desiredStr, _ := cmd.Flags().GetString("desired")
 		bidPrice, _ := cmd.Flags().GetString("bidprice")
+		customLabelsStr, _ := cmd.Flags().GetString("custom-labels")
+		customAnnotationsStr, _ := cmd.Flags().GetString("custom-annotations")
 
-		if name == "" || cloudspace == "" || desiredStr == "" || bidPrice == "" {
-			return fmt.Errorf("name, cloudspace, desired, and bidprice are required")
+		if name == "" || cloudspace == "" {
+			return fmt.Errorf("name, cloudspace are required")
 		}
 
-		desired, err := strconv.Atoi(desiredStr)
+		// Parse custom labels
+		customLabels, err := parseCustomLabels(customLabelsStr)
 		if err != nil {
-			return fmt.Errorf("desired must be a valid integer: %w", err)
+			return fmt.Errorf("invalid custom-labels format: %w", err)
+		}
+
+		// Parse custom annotations
+		customAnnotations, err := parseCustomAnnotations(customAnnotationsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-annotations format: %w", err)
+		}
+		var desired int
+		if desiredStr != "" {
+			desired, err = strconv.Atoi(desiredStr)
+			if err != nil {
+				return fmt.Errorf("desired must be a valid integer: %w", err)
+			}
 		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
@@ -352,11 +426,13 @@ var spotUpdateCmd = &cobra.Command{
 		}
 
 		pool := &rxtspot.SpotNodePool{
-			Name:       name,
-			Org:        org,
-			Cloudspace: cloudspace,
-			Desired:    desired,
-			BidPrice:   bidPrice,
+			Name:              name,
+			Org:               org,
+			Cloudspace:        cloudspace,
+			Desired:           desired,
+			BidPrice:          bidPrice,
+			CustomLabels:      customLabels,
+			CustomAnnotations: customAnnotations,
 		}
 
 		err = client.GetAPI().UpdateSpotNodePool(context.Background(), org, *pool)
@@ -443,17 +519,33 @@ var ondemandCreateCmd = &cobra.Command{
 			return fmt.Errorf("desired must be a valid integer: %w", err)
 		}
 
+		customLabelsStr, _ := cmd.Flags().GetString("custom-labels")
+		customAnnotationsStr, _ := cmd.Flags().GetString("custom-annotations")
+
+		// Parse custom labels
+		customLabels, err := parseCustomLabels(customLabelsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-labels format: %w", err)
+		}
+
+		// Parse custom annotations
+		customAnnotations, err := parseCustomAnnotations(customAnnotationsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-annotations format: %w", err)
+		}
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
 
 		pool := &rxtspot.OnDemandNodePool{
-			Name:        name,
-			Org:         org,
-			Cloudspace:  cloudspace,
-			ServerClass: serverClass,
-			Desired:     desired,
+			Name:              name,
+			Org:               org,
+			Cloudspace:        cloudspace,
+			ServerClass:       serverClass,
+			Desired:           desired,
+			CustomLabels:      customLabels,
+			CustomAnnotations: customAnnotations,
 		}
 
 		err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, *pool)
@@ -532,13 +624,16 @@ var ondemandUpdateCmd = &cobra.Command{
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
 		desiredStr, _ := cmd.Flags().GetString("desired")
 
-		if name == "" || cloudspace == "" || desiredStr == "" {
-			return fmt.Errorf("name, cloudspace, and desired are required")
+		if name == "" || cloudspace == "" {
+			return fmt.Errorf("name and cloudspace are required")
 		}
 
-		desired, err := strconv.Atoi(desiredStr)
-		if err != nil {
-			return fmt.Errorf("desired must be a valid integer: %w", err)
+		var desired int
+		if desiredStr != "" {
+			desired, err = strconv.Atoi(desiredStr)
+			if err != nil {
+				return fmt.Errorf("desired must be a valid integer: %w", err)
+			}
 		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
