@@ -19,7 +19,9 @@ BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Ldflags
-LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE) -X main.GitCommit=$(GIT_COMMIT)"
+LDFLAGS=-ldflags "-X github.com/rackspace-spot/spotctl/internal/version.Version=$(VERSION) \
+	-X github.com/rackspace-spot/spotctl/internal/version.Commit=$(GIT_COMMIT) \
+	-X github.com/rackspace-spot/spotctl/internal/version.BuildDate=$(BUILD_DATE)"
 
 # Default target
 .DEFAULT_GOAL := build

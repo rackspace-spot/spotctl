@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/rackspace-spot/spotctl/internal/version"
 	config "github.com/rackspace-spot/spotctl/pkg"
 
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ var rootCmd = &cobra.Command{
 	Use:     "spotctl",
 	Short:   "Rackspace Spot CLI - Manage your Spot resources",
 	Long:    `A command-line interface for managing Rackspace Spot resources. This CLI provides an easy way to manage cloudspaces, node pools, and other Spot resources.`,
-	Version: "0.1.0",
+	Version: version.GetVersion(),
 	// Root PersistentPreRun runs before ANY subcommand
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		initLoggingFlags(verbosity)
