@@ -3,35 +3,62 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
-	"github.com/spf13/pflag"
-
-	"github.com/AlecAivazis/survey/v2"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fatih/color"
 	"github.com/google/uuid"
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 	"github.com/rackspace-spot/spotctl/internal"
+	"github.com/rackspace-spot/spotctl/internal/ui"
 	config "github.com/rackspace-spot/spotctl/pkg"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
-	// "sigs.k8s.io/yaml"
 )
 
-const HKG_HKG_1 = "hkg-hkg-1"
-const US_CENTRAL_ORD_1 = "us-central-ord-1"
-const AUS_SYD_1 = "aus-syd-1"
-const UK_LON_1 = "uk-lon-1"
-const US_EAST_IAD_1 = "us-east-iad-1"
-const US_CENTRAL_DFW_1 = "us-central-dfw-1"
-const US_CENTRAL_DFW_2 = "us-central-dfw-2"
-const US_WEST_SJC_1 = "us-west-sjc-1"
+type interactiveModel struct {
+	client      *internal.Client
+	cfg         *config.SpotConfig
+	params      createCloudspaceParams
+	currentStep int
+	steps       []func() error
+	err         error
+	cancelled   bool
+}
+
+// createCloudspaceParams holds all parameters needed for cloudspace creation
+type createCloudspaceParams struct {
+	Name                 string                     `json:"name" yaml:"name"`
+	Org                  string                     `json:"org" yaml:"org"`
+	Region               string                     `json:"region" yaml:"region"`
+	KubernetesVersion    string                     `json:"kubernetesVersion" yaml:"kubernetesVersion"`
+	PreemptionWebhookURL string                     `json:"preemptionWebhookURL" yaml:"preemptionWebhookURL"`
+	CNI                  string                     `json:"cni" yaml:"cni"`
+	ConfigPath           string                     `json:"-" yaml:"-"`
+	SpotNodePools        []rxtspot.SpotNodePool     `json:"spotNodePools,omitempty" yaml:"spotNodePools,omitempty"`
+	OnDemandNodePools    []rxtspot.OnDemandNodePool `json:"onDemandNodePools,omitempty" yaml:"onDemandNodePools,omitempty"`
+}
+
+const (
+	HKG_HKG_1        = "hkg-hkg-1"
+	US_CENTRAL_ORD_1 = "us-central-ord-1"
+	AUS_SYD_1        = "aus-syd-1"
+	UK_LON_1         = "uk-lon-1"
+	US_EAST_IAD_1    = "us-east-iad-1"
+	US_CENTRAL_DFW_1 = "us-central-dfw-1"
+	US_CENTRAL_DFW_2 = "us-central-dfw-2"
+	US_WEST_SJC_1    = "us-west-sjc-1"
+)
 
 // cloudspacesCmd represents the cloudspaces command
 var cloudspacesCmd = &cobra.Command{
@@ -180,6 +207,18 @@ var cloudspacesCreateCmd = &cobra.Command{
 	Short: "Create a new cloudspace",
 	Long:  `Create a new Rackspace Spot cloudspace (Kubernetes cluster) with optional spot and on-demand node pools.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Create a cancellable context
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+
+		// Handle interrupt signals
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			fmt.Println("\n\nOperation cancelled by user")
+			cancel()
+		}()
 		// Get CLI configuration
 		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {
@@ -223,6 +262,14 @@ var cloudspacesCreateCmd = &cobra.Command{
 			return fmt.Errorf("validation failed: %w", err)
 		}
 
+		// Check if context was cancelled before starting creation
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("operation cancelled")
+		default:
+			// Continue with creation
+		}
+
 		// Create cloudspace with all required fields
 		cloudspace := rxtspot.CloudSpace{
 			Name:                 params.Name,
@@ -233,11 +280,27 @@ var cloudspacesCreateCmd = &cobra.Command{
 			PreemptionWebhookURL: params.PreemptionWebhookURL,
 		}
 
-		if err := client.GetAPI().CreateCloudspace(context.Background(), cloudspace); err != nil {
+		// Temporary debug to verify values before API call
+		fmt.Printf("Creating cloudspace: Name=%q Org=%q Region=%q K8s=%q CNI=%q\n",
+			cloudspace.Name, cloudspace.Org, cloudspace.Region, cloudspace.KubernetesVersion, cloudspace.CNI)
+
+		if err := client.GetAPI().CreateCloudspace(ctx, cloudspace); err != nil {
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
 		// Create spot node pools if any
 		for _, pool := range params.SpotNodePools {
+			// Check if context was cancelled before each pool creation
+			select {
+			case <-ctx.Done():
+				// Clean up the cloudspace if we're cancelled mid-creation
+				if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+					klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
+				}
+				return fmt.Errorf("operation cancelled during spot pool creation")
+			default:
+				// Continue with pool creation
+			}
+
 			// Ensure bid price is properly formatted
 			bidPrice, err := validateBidPrice(pool.BidPrice)
 			if err != nil {
@@ -262,14 +325,14 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Desired:     pool.Desired,
 			}
 
-			// Create the spot node pool
-			createErr := client.GetAPI().CreateSpotNodePool(context.Background(), params.Org, spotPool)
+			// Create the spot node pool with context
+			createErr := client.GetAPI().CreateSpotNodePool(ctx, params.Org, spotPool)
 			if createErr != nil {
 				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				if err != nil {
 					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
 				}
-				return fmt.Errorf("failed to create spot node pool %s: %w", spotPool.Name, createErr)
+				return fmt.Errorf("failed to create spot node pool %s : %w", spotPool.Name, createErr)
 			}
 
 			// Verify the pool was created successfully
@@ -281,6 +344,18 @@ var cloudspacesCreateCmd = &cobra.Command{
 
 		// Create on-demand node pools if any
 		for _, pool := range params.OnDemandNodePools {
+			// Check if context was cancelled before each pool creation
+			select {
+			case <-ctx.Done():
+				// Clean up the cloudspace if we're cancelled mid-creation
+				if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+					klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
+				}
+				return fmt.Errorf("operation cancelled during on-demand pool creation")
+			default:
+				// Continue with pool creation
+			}
+
 			if pool.Name == "" {
 				pool.Name = uuid.NewString()
 			}
@@ -292,8 +367,8 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Desired:     pool.Desired,
 			}
 
-			// Create the on-demand node pool
-			createErr := client.GetAPI().CreateOnDemandNodePool(context.Background(), params.Org, onDemandPool)
+			// Create the on-demand node pool with context
+			createErr := client.GetAPI().CreateOnDemandNodePool(ctx, params.Org, onDemandPool)
 			if createErr != nil {
 				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
 				if err != nil {
@@ -319,8 +394,18 @@ var cloudspacesCreateCmd = &cobra.Command{
 			color.CyanString(cloudspaceGetResponse.Region),
 		)
 
-		// Output the created cloudspace details
-		return internal.OutputData(cloudspaceGetResponse, outputFormat)
+		// Check if context was cancelled before final output
+		select {
+		case <-ctx.Done():
+			// Clean up the cloudspace if we're cancelled at the last moment
+			if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+				klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
+			}
+			return fmt.Errorf("operation cancelled during finalization")
+		default:
+			// Output the created cloudspace details
+			return internal.OutputData(cloudspaceGetResponse, outputFormat)
+		}
 	},
 }
 
@@ -422,19 +507,6 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 	},
 }
 
-// createCloudspaceParams holds all parameters needed for cloudspace creation
-type createCloudspaceParams struct {
-	Name                 string                     `json:"name" yaml:"name"`
-	Org                  string                     `json:"org" yaml:"org"`
-	Region               string                     `json:"region" yaml:"region"`
-	KubernetesVersion    string                     `json:"kubernetesVersion" yaml:"kubernetesVersion"`
-	PreemptionWebhookURL string                     `json:"preemptionWebhookURL" yaml:"preemptionWebhookURL"`
-	CNI                  string                     `json:"cni" yaml:"cni"`
-	ConfigPath           string                     `json:"-" yaml:"-"`
-	SpotNodePools        []rxtspot.SpotNodePool     `json:"spotNodePools,omitempty" yaml:"spotNodePools,omitempty"`
-	OnDemandNodePools    []rxtspot.OnDemandNodePool `json:"onDemandNodePools,omitempty" yaml:"onDemandNodePools,omitempty"`
-}
-
 // getBidPrice parses and validates the minimum bid price
 func getBidPrice(priceStr string) (string, error) {
 	if priceStr == "" {
@@ -480,165 +552,32 @@ func getBidPrice(priceStr string) (string, error) {
 	return fmt.Sprintf("%g", price), nil
 }
 
-// collectInteractiveInput gathers all required parameters interactively
+// collectInteractiveInput gathers all required parameters interactively using BubbleTea
 func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*createCloudspaceParams, error) {
-	params := &createCloudspaceParams{}
-	var err error
-
 	fmt.Println("\nStarting interactive cloudspace creation...")
+	// Initialize the interactive model (holds params and step functions)
+	model := initInteractiveModel(client, cfg)
 
-	// Region selection
-	fmt.Println("\nFetching available regions...")
-	defaultRegion := ""
-	if cfg != nil && cfg.Region != "" {
-		defaultRegion = cfg.Region
-	}
-
-	params.Region, err = client.PromptForRegionWithDefault(context.Background(), defaultRegion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to select region: %w", err)
-	}
-	fmt.Printf("\nSelected region: %s\n", color.GreenString(params.Region))
-
-	// Cloudspace name
-	namePrompt := &survey.Input{
-		Message: "Enter a name for your cloudspace:",
-	}
-	if err := survey.AskOne(namePrompt, &params.Name); err != nil || params.Name == "" {
-		return nil, fmt.Errorf("failed to get cloudspace name: %w", err)
-	}
-
-	// Kubernetes version selection
-	fmt.Println("\nSelect Kubernetes version:")
-	params.KubernetesVersion, err = client.PromptForKubernetesVersion("1.31.1")
-	if err != nil {
-		return nil, fmt.Errorf("failed to select Kubernetes version: %w", err)
-	}
-
-	// CNI selection
-	fmt.Println("\nSelect CNI plugin:")
-	params.CNI, err = client.PromptForCNI("calico")
-	if err != nil {
-		return nil, fmt.Errorf("failed to select CNI: %w", err)
-	}
-	for {
-		// Ask for node pool type
-		poolType := ""
-		poolPrompt := &survey.Select{
-			Message: "Add a node pool:",
-			Options: []string{"Spot", "On-Demand"},
+	// Execute each interactive step sequentially. Each step handles its own prompt.
+	for _, step := range model.steps {
+		if err := step(); err != nil {
+			return nil, err
 		}
-		if err := survey.AskOne(poolPrompt, &poolType); err != nil {
-			return nil, fmt.Errorf("failed to select node pool type: %w", err)
+		if model.cancelled {
+			return nil, fmt.Errorf("interactive prompt cancelled")
 		}
-
-		// Get server class
-		serverClass, minBidPrice, onDemandPrice, err := client.PromptForServerClassWithBidPrice(context.Background(), params.Region, strings.ToLower(poolType))
-		if err != nil {
-			return nil, fmt.Errorf("failed to select server class: %w", err)
-		}
-
-		// Generate node pool name
-		nodePoolUUID := uuid.New().String()
-		// Get node count
-		nodeCount, err := client.PromptForNodeCount("")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get node count: %w", err)
-		}
-		desired, _ := strconv.Atoi(nodeCount)
-
-		if poolType == "Spot" {
-			// Get the minimum bid price
-			minBidPrice, err := getBidPrice(minBidPrice)
-			if err != nil {
-				return nil, fmt.Errorf("invalid minimum bid price: %w", err)
-			}
-
-			// Get bid price for spot
-			bidPrice := ""
-			bidPrompt := &survey.Input{
-				Message: fmt.Sprintf("Enter your maximum bid price (minimum: $%s):", minBidPrice),
-				Default: minBidPrice,
-			}
-			if err := survey.AskOne(bidPrompt, &bidPrice); err != nil || bidPrice == "" {
-				return nil, fmt.Errorf("bid price is required")
-			}
-
-			// Validate the bid price
-			bidPrice, err = getBidPrice(bidPrice)
-			if err != nil {
-				return nil, fmt.Errorf("invalid bid price: %w", err)
-			}
-
-			// Format bid price
-			if bidPriceFloat, err := strconv.ParseFloat(bidPrice, 64); err == nil {
-				bidPrice = fmt.Sprintf("%.3f", bidPriceFloat)
-			}
-
-			// Add to spot node pools
-			pool := rxtspot.SpotNodePool{
-				Name:        nodePoolUUID,
-				ServerClass: serverClass,
-				BidPrice:    bidPrice,
-				Desired:     desired,
-			}
-			params.SpotNodePools = append(params.SpotNodePools, pool)
-		} else {
-			// Add to on-demand node pools
-			pool := rxtspot.OnDemandNodePool{
-				Name:                 nodePoolUUID,
-				ServerClass:          serverClass,
-				Desired:              desired,
-				OnDemandPricePerHour: onDemandPrice,
-			}
-			params.OnDemandNodePools = append(params.OnDemandNodePools, pool)
-		}
-
-		// Ask to add another node pool
-		if ok, err := internal.Confirm("\nAdd another node pool?", false); err != nil || !ok {
-			break
+		if model.err != nil {
+			return nil, model.err
 		}
 	}
 
-	// Show configuration summary
-	fmt.Println("\nCloudspace Configuration:")
-	fmt.Printf("• %-20s %s\n", "Name:", color.CyanString(params.Name))
-	fmt.Printf("• %-20s %s\n", "Region:", color.CyanString(params.Region))
-	fmt.Printf("• %-20s %s\n", "Kubernetes Version:", color.CyanString(params.KubernetesVersion))
-	fmt.Printf("• %-20s %s\n", "CNI:", color.CyanString(params.CNI))
-
-	if len(params.SpotNodePools) > 0 {
-		fmt.Println("\nSpot Node Pools:")
-		for _, pool := range params.SpotNodePools {
-			fmt.Printf("  • %s\n", color.CyanString(pool.Name))
-			fmt.Printf("    %-15s %s\n", "Instance Type:", pool.ServerClass)
-			fmt.Printf("    %-15s %d\n", "Desired Nodes:", pool.Desired)
-			fmt.Printf("    %-15s $%s\n\n", "Bid Price:", pool.BidPrice)
-		}
+	// Validate the collected parameters
+	if err := validateCreateParams(&model.params, true); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
-
-	if len(params.OnDemandNodePools) > 0 {
-		fmt.Println("\nOn-Demand Node Pools:")
-		for _, pool := range params.OnDemandNodePools {
-			fmt.Printf("  • %s\n", color.CyanString(pool.Name))
-			fmt.Printf("    %-15s %s\n", "Instance Type:", pool.ServerClass)
-			fmt.Printf("    %-15s %d\n", "Desired Nodes:", pool.Desired)
-			fmt.Printf("    %-15s $%s\n\n", "Price:", pool.OnDemandPricePerHour)
-		}
-	}
-
-	// Final confirmation
-	confirm, err := internal.Confirm("\nCreate cloudspace with the above configuration?", true)
-	if err != nil || !confirm {
-		return nil, fmt.Errorf("cloudspace creation cancelled")
-	}
-
-	// Ensure at least one node pool is configured
-	if len(params.SpotNodePools) == 0 && len(params.OnDemandNodePools) == 0 {
-		return nil, fmt.Errorf("at least one node pool (spot or on-demand) is required")
-	}
-
-	return params, nil
+	// Return a copy to avoid any unintended aliasing of the model's internal field
+	cp := model.params
+	return &cp, nil
 }
 
 // validateCreateParams validates the provided parameters
@@ -876,4 +815,377 @@ func isValidRegion(region string) bool {
 	default:
 		return false
 	}
+}
+
+func initInteractiveModel(client *internal.Client, cfg *config.SpotConfig) *interactiveModel {
+	m := &interactiveModel{
+		client: client,
+		cfg:    cfg,
+		params: createCloudspaceParams{
+			KubernetesVersion: "1.31.1",
+			CNI:               "calico",
+		},
+	}
+
+	// Define the steps of our interactive flow
+	m.steps = []func() error{
+		m.stepSelectRegion,
+		m.stepEnterName,
+		m.stepSelectKubernetesVersion,
+		m.stepSelectCNI,
+		m.stepAddNodePools,
+		m.stepSummaryAndConfirm,
+	}
+
+	return m
+}
+
+// Init initializes the interactive model
+func (m *interactiveModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m *interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.cancelled = true
+			return m, tea.Quit
+		}
+	}
+
+	return m, nil
+}
+
+func (m *interactiveModel) View() string {
+	if m.err != nil {
+		return fmt.Sprintf("Error: %v\nPress q to quit\n", m.err)
+	}
+
+	if m.cancelled {
+		return "Operation cancelled\n"
+	}
+
+	if m.currentStep >= len(m.steps) {
+		return "Configuration complete!\n"
+	}
+
+	return ""
+}
+
+func (m *interactiveModel) stepSelectRegion() error {
+	fmt.Println("Fetching available regions...")
+
+	// Try to get available regions
+	regions, err := m.client.GetAPI().ListRegions(context.Background())
+	if err != nil || len(regions) == 0 {
+		// Fallback to manual input if listing regions is not permitted or empty
+		region, ierr := internal.PromptForString("Enter region (e.g., ord, iad, dfw)", m.params.Region)
+		if ierr != nil {
+			return fmt.Errorf("region input failed: %w", ierr)
+		}
+		region = strings.TrimSpace(region)
+		if region == "" {
+			fmt.Println("Region cannot be empty. Please enter a valid region.")
+			return m.stepSelectRegion()
+		}
+		m.params.Region = region
+		return nil
+	}
+
+	// Convert regions to string slice for selection
+	var regionOptions []string
+	for _, r := range regions {
+		regionOptions = append(regionOptions, r.Name)
+	}
+
+	// Create and run the selection prompt
+	p := tea.NewProgram(ui.NewSelectModel(regionOptions))
+	m2, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("region selection failed: %w", err)
+	}
+
+	if sm, ok := m2.(ui.SelectModel); ok {
+		if sm.Cancelled() {
+			m.cancelled = true
+			return nil
+		}
+		if sm.Selected() != "" {
+			m.params.Region = sm.Selected()
+			fmt.Printf("Selected region: %s\n", color.CyanString(m.params.Region))
+			return nil
+		}
+	}
+
+	// If we get here, treat as cancelled
+	m.cancelled = true
+	return nil
+}
+
+func (m *interactiveModel) stepEnterName() error {
+	fmt.Printf("\n%s Enter a name for your cloudspace:\n", color.GreenString("?"))
+	for {
+		// Create and run the input prompt
+		p := tea.NewProgram(ui.NewInputModel("Enter cloudspace name", "", false))
+		m2, err := p.Run()
+		if err != nil {
+			return fmt.Errorf("name input failed: %w", err)
+		}
+
+		if im, ok := m2.(ui.InputModel); ok {
+			if im.Cancelled() {
+				m.cancelled = true
+				return nil
+			}
+			val := strings.TrimSpace(im.Value())
+			if val != "" {
+				m.params.Name = val
+				fmt.Printf("%s Enter a name for your cloudspace: %s\n", color.GreenString("?"), color.CyanString(m.params.Name))
+				return nil
+			}
+		}
+
+		// Inform and retry unless the overall session was cancelled elsewhere
+		fmt.Println("Name cannot be empty. Please enter a valid name.")
+		// continue loop to re-prompt
+	}
+}
+
+func (m *interactiveModel) stepSelectKubernetesVersion() error {
+	fmt.Printf("\n%s Select Kubernetes version:\n", color.GreenString("?"))
+	// Define available versions
+	versions := []string{"1.31.1", "1.30.10", "1.29.6"}
+
+	// Create and run the selection prompt
+	p := tea.NewProgram(ui.NewSelectModel(versions))
+	m2, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("Kubernetes version selection failed: %w", err)
+	}
+
+	if sm, ok := m2.(ui.SelectModel); ok {
+		if sm.Cancelled() {
+			m.cancelled = true
+			return nil
+		}
+		if sm.Selected() != "" {
+			m.params.KubernetesVersion = sm.Selected()
+			fmt.Printf("%s Select Kubernetes version: %s\n", color.GreenString("?"), color.CyanString(m.params.KubernetesVersion))
+			return nil
+		}
+	}
+
+	// If we get here, treat as cancelled
+	m.cancelled = true
+	return nil
+}
+
+func (m *interactiveModel) stepSelectCNI() error {
+	fmt.Printf("\n%s Select CNI plugin:\n", color.GreenString("?"))
+	// Define available CNIs
+	cniOptions := []string{"calico", "cilium", "bring your own CNI"}
+
+	// Create and run the selection prompt
+	p := tea.NewProgram(ui.NewSelectModel(cniOptions))
+	m2, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("CNI selection failed: %w", err)
+	}
+
+	if sm, ok := m2.(ui.SelectModel); ok {
+		if sm.Cancelled() {
+			m.cancelled = true
+			return nil
+		}
+		if sm.Selected() != "" {
+			m.params.CNI = sm.Selected()
+			fmt.Printf("%s Select CNI plugin: %s\n", color.GreenString("?"), color.CyanString(m.params.CNI))
+			return nil
+		}
+	}
+
+	// If we get here, treat as cancelled
+	m.cancelled = true
+	return nil
+}
+
+func (m *interactiveModel) stepAddNodePools() error {
+	for {
+		// Ask pool type
+		poolType, err := m.client.PromptForPoolType()
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				m.cancelled = true
+				return nil
+			}
+			return fmt.Errorf("failed to select node pool type: %w", err)
+		}
+		fmt.Printf("%s Add a node pool: %s\n", color.GreenString("?"), color.CyanString(poolType))
+
+		// Get server class and pricing depending on pool type
+		var (
+			serverClass   string
+			minBidPrice   string
+			onDemandPrice string
+		)
+		if strings.EqualFold(poolType, "Spot") {
+			sc, minBid, _, err := m.client.PromptForServerClassWithBidPrice(context.Background(), m.params.Region, "spot")
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					m.cancelled = true
+					return nil
+				}
+				return fmt.Errorf("failed to select server class: %w", err)
+			}
+			serverClass = sc
+			minBidPrice = minBid
+
+			// Get desired nodes
+			desiredStr, err := m.client.PromptForNodeCount("spot")
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					m.cancelled = true
+					return nil
+				}
+				return fmt.Errorf("failed to get node count: %w", err)
+			}
+			desired, err := strconv.Atoi(strings.TrimSpace(desiredStr))
+			if err != nil || desired < 1 {
+				fmt.Println("Please enter a valid number >= 1.")
+				continue
+			}
+
+			// Get bid price
+			bidMsg := fmt.Sprintf("Enter your maximum bid price (minimum: $%s):", minBidPrice)
+			bidPrice, err := m.client.PromptForBidPrice(bidMsg, minBidPrice)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					m.cancelled = true
+					return nil
+				}
+				return fmt.Errorf("failed to get bid price: %w", err)
+			}
+			bidPrice, err = validateBidPrice(bidPrice)
+			if err != nil {
+				fmt.Printf("Invalid bid price: %v\n", err)
+				continue
+			}
+			fmt.Printf("%s Enter your maximum bid price (minimum: $%s): %s\n", color.GreenString("?"), minBidPrice, color.CyanString(bidPrice))
+
+			// Add spot pool
+			m.params.SpotNodePools = append(m.params.SpotNodePools, rxtspot.SpotNodePool{
+				Name:        uuid.New().String(),
+				ServerClass: serverClass,
+				BidPrice:    bidPrice,
+				Desired:     desired,
+			})
+		} else { // On-Demand
+			sc, _, odPrice, err := m.client.PromptForServerClassWithBidPrice(context.Background(), m.params.Region, "ondemand")
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					m.cancelled = true
+					return nil
+				}
+				return fmt.Errorf("failed to select server class: %w", err)
+			}
+			serverClass = sc
+			onDemandPrice = odPrice
+
+			// Get desired nodes
+			desiredStr, err := m.client.PromptForNodeCount("on-demand")
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					m.cancelled = true
+					return nil
+				}
+				return fmt.Errorf("failed to get node count: %w", err)
+			}
+			desired, err := strconv.Atoi(strings.TrimSpace(desiredStr))
+			if err != nil || desired < 1 {
+				fmt.Println("Please enter a valid number >= 1.")
+				continue
+			}
+
+			// Add on-demand pool
+			m.params.OnDemandNodePools = append(m.params.OnDemandNodePools, rxtspot.OnDemandNodePool{
+				Name:                 uuid.New().String(),
+				ServerClass:          serverClass,
+				Desired:              desired,
+				OnDemandPricePerHour: onDemandPrice,
+			})
+		}
+
+		// Ask to add another node pool
+		more, err := internal.Confirm("Add another node pool?", false)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				m.cancelled = true
+				return nil
+			}
+			return fmt.Errorf("confirmation failed: %w", err)
+		}
+		if !more {
+			break
+		}
+	}
+	return nil
+}
+
+func (m *interactiveModel) stepSummaryAndConfirm() error {
+	// Summary header
+	fmt.Println("\nCloudspace Configuration:")
+	fmt.Printf(`
+Cloudspace Configuration:
+• %-20s %s
+• %-20s %s
+• %-20s %s
+• %-20s %s
+`,
+		"Name:", color.CyanString(m.params.Name),
+		"Region:", color.CyanString(m.params.Region),
+		"Kubernetes Version:", color.CyanString(m.params.KubernetesVersion),
+		"CNI:", color.CyanString(m.params.CNI),
+	)
+
+	if len(m.params.SpotNodePools) > 0 {
+		fmt.Println("\nSpot Node Pools:")
+		for _, pool := range m.params.SpotNodePools {
+			fmt.Printf(`  • %s
+    %-15s %s
+    %-15s %d
+    %-15s $%s
+`,
+				color.CyanString(pool.Name),
+				"Instance Type:", pool.ServerClass,
+				"Desired Nodes:", pool.Desired,
+				"Bid Price:", pool.BidPrice,
+			)
+		}
+	}
+
+	if len(m.params.OnDemandNodePools) > 0 {
+		fmt.Println("\nOn-Demand Node Pools:")
+		for _, pool := range m.params.OnDemandNodePools {
+			fmt.Printf(`  • %s
+    %-15s %s
+    %-15s %d
+    %-15s %s\n\n`,
+				color.CyanString(pool.Name),
+				"Instance Type:", pool.ServerClass,
+				"Desired Nodes:", pool.Desired,
+				"Price:", pool.OnDemandPricePerHour,
+			)
+		}
+	}
+
+	ok, err := internal.Confirm("\nCreate cloudspace with the above configuration?", true)
+	if err != nil {
+		return fmt.Errorf("confirmation failed: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("cloudspace creation cancelled")
+	}
+	return nil
 }

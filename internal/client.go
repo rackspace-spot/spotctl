@@ -10,6 +10,11 @@ import (
 	rxtspot "github.com/rackspace-spot/spot-go-sdk/api/v1"
 )
 
+const (
+	BaseURL  = "https://spot.rackspace.com"
+	OAuthURL = "https://login.spot.rackspace.com"
+)
+
 // Client wraps the Spot SDK client with CLI-specific functionality
 type Client struct {
 	api rxtspot.SpotAPI
@@ -32,12 +37,12 @@ func DefaultConfig() ClientConfig {
 	if os.Getenv("SPOT_BASE_URL") != "" {
 		baseURL = os.Getenv("SPOT_BASE_URL")
 	} else {
-		baseURL = "https://spot.rackspace.com"
+		baseURL = BaseURL
 	}
 	if os.Getenv("SPOT_AUTH_URL") != "" {
 		authURL = os.Getenv("SPOT_AUTH_URL")
 	} else {
-		authURL = "https://login.spot.rackspace.com"
+		authURL = OAuthURL
 	}
 
 	return ClientConfig{
