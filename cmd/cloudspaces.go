@@ -962,7 +962,7 @@ func (m *interactiveModel) stepSelectKubernetesVersion() error {
 	p := tea.NewProgram(ui.NewSelectModel(versions))
 	m2, err := p.Run()
 	if err != nil {
-		return fmt.Errorf("Kubernetes version selection failed: %w", err)
+		return fmt.Errorf("kubernetes version selection failed: %w", err)
 	}
 
 	if sm, ok := m2.(ui.SelectModel); ok {
@@ -991,7 +991,7 @@ func (m *interactiveModel) stepSelectCNI() error {
 	p := tea.NewProgram(ui.NewSelectModel(cniOptions))
 	m2, err := p.Run()
 	if err != nil {
-		return fmt.Errorf("CNI selection failed: %w", err)
+		return fmt.Errorf("cni selection failed: %w", err)
 	}
 
 	if sm, ok := m2.(ui.SelectModel); ok {
@@ -1058,7 +1058,7 @@ func (m *interactiveModel) stepAddNodePools() error {
 			}
 
 			// Get bid price
-			bidMsg := fmt.Sprintf("Enter your maximum bid price (minimum: $%s):", minBidPrice)
+			bidMsg := fmt.Sprintf("Enter your maximum bid price (minimum: $%s)", minBidPrice)
 			bidPrice, err := m.client.PromptForBidPrice(bidMsg, minBidPrice)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -1072,7 +1072,7 @@ func (m *interactiveModel) stepAddNodePools() error {
 				fmt.Printf("Invalid bid price: %v\n", err)
 				continue
 			}
-			fmt.Printf("%s Enter your maximum bid price (minimum: $%s): %s\n", color.GreenString("?"), minBidPrice, color.CyanString(bidPrice))
+			fmt.Printf("%s Enter your maximum bid price (minimum: $%s) %s\n", color.GreenString("?"), minBidPrice, color.CyanString(bidPrice))
 
 			// Add spot pool
 			m.params.SpotNodePools = append(m.params.SpotNodePools, rxtspot.SpotNodePool{
