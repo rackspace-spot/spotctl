@@ -12,6 +12,7 @@ BINARY_NAME=spotctl
 BINARY_UNIX=$(BINARY_NAME)_unix
 BINARY_WINDOWS=$(BINARY_NAME).exe
 MAIN_PATH=.
+DIST=dist
 
 # Build info
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -118,7 +119,7 @@ ci: deps fmt vet test build
 
 # Release workflow: clean, deps, fmt, vet, test, build-all
 .PHONY: release
-release: clean deps fmt vet test build-all
+release: clean deps fmt vet test build-all-named
 
 # Show help
 .PHONY: help
@@ -139,9 +140,25 @@ help:
 	@echo "  build-windows- Cross compile for Windows"
 	@echo "  build-darwin - Cross compile for macOS"
 	@echo "  build-all    - Build for all platforms"
+	@echo "  build-all-named - Build versioned artifacts to dist/"
 	@echo "  run          - Build and run the application"
 	@echo "  dev          - Development workflow (fmt, vet, test, build)"
 	@echo "  ci           - CI workflow (deps, fmt, vet, test, build)"
-	@echo "  release      - Release workflow (clean, deps, fmt, vet, test, build-all)"
+	@echo "  release      - Release workflow (clean, deps, fmt, vet, test, build-all-named)"
 	@echo "  help         - Show this help message"
+
+# Ensure dist directory exists
+.PHONY: distdir
+distdir:
+	mkdir -p $(DIST)
+
+# Build cross-platform artifacts with versioned filenames
+.PHONY: build-all-named
+build-all-named: distdir
+	@echo "Building versioned artifacts with VERSION=$(VERSION) COMMIT=$(GIT_COMMIT) DATE=$(BUILD_DATE)"
+	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(DIST)/$(BINARY_NAME)-$(VERSION)-linux-amd64 -v $(MAIN_PATH)
+	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(DIST)/$(BINARY_NAME)-$(VERSION)-linux-arm64 -v $(MAIN_PATH)
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-amd64 -v $(MAIN_PATH)
+	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-arm64 -v $(MAIN_PATH)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(DIST)/$(BINARY_NAME)-$(VERSION)-windows-amd64.exe -v $(MAIN_PATH)
 

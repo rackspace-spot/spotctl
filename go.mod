@@ -3,19 +3,20 @@ module github.com/rackspace-spot/spotctl
 go 1.23.5
 
 require (
-	github.com/AlecAivazis/survey/v2 v2.3.7
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
-	github.com/rackspace-spot/spot-go-sdk v0.0.0-00010101000000-000000000000
+	//github.com/rackspace-spot/spot-go-sdk v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/klog v1.0.0
 	k8s.io/klog/v2 v2.130.1
 )
+
+require github.com/rackspace-spot/spot-go-sdk v0.0.0-20250903062914-c7f403bd7b75
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -27,13 +28,11 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/mgutz/ansi v0.0.0-20170206155736-9520e82c474b // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
@@ -41,8 +40,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
-	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.4.0 // indirect
 )
-
-replace github.com/rackspace-spot/spot-go-sdk => /home/rajendra-gosavi/platform9/spot-go-sdk
