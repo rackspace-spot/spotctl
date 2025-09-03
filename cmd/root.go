@@ -80,6 +80,8 @@ func Execute() {
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().IntVarP(&verbosity, "v", "v", 0, "Log verbosity level (0=Errors only)")
+	// Customize the version output format
+	rootCmd.SetVersionTemplate("{{.Name}} version : {{.Version}}\n")
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		// Initialize klog flags into global flagset
 		klog.InitFlags(nil)
