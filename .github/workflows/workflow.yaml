@@ -1,0 +1,90 @@
+name: Build, Sign & Release CLI
+
+on:
+  push:
+    tags:
+      - '*'    # Trigger on push to any tag
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensure tags and history are available for versioning
+
+      - name: Setup git auth for private Go modules
+        env:
+          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${WORKFLOW_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23' # Set your Go version
+
+      - name: Compute build metadata
+        id: meta
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+
+      - name: Build all platform binaries (ldflags stamped)
+        env:
+          VERSION: ${{ steps.meta.outputs.VERSION }}
+          COMMIT: ${{ steps.meta.outputs.COMMIT }}
+          DATE: ${{ steps.meta.outputs.DATE }}
+          GOPRIVATE: github.com/rackspace-spot/*
+        run: |
+          set -euo pipefail
+          name="spotctl"  # CLI binary name
+          mkdir -p dist
+          LDFLAGS="-X github.com/rackspace-spot/spotctl/internal/version.Version=${VERSION} \
+                   -X github.com/rackspace-spot/spotctl/internal/version.Commit=${COMMIT} \
+                   -X github.com/rackspace-spot/spotctl/internal/version.BuildDate=${DATE}"
+          echo "Building ${name} with VERSION=${VERSION} COMMIT=${COMMIT} DATE=${DATE}"
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/${name}-linux-amd64
+          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/${name}-linux-arm64
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/${name}-darwin-amd64
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/${name}-darwin-arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/${name}-windows-amd64.exe
+
+      - name: Install cosign
+        run: |
+          curl -LO https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          chmod +x cosign-linux-amd64
+          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+
+      - name: Prepare cosign private key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          echo "$COSIGN_PRIVATE_KEY" > cosign.key
+
+      - name: Sign all binaries
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSPHRASE }}
+        run: |
+          for bin in dist/*; do
+            cosign sign-blob --key cosign.key -y "$bin"
+          done
+
+      - name: Create GitHub Release with signed binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          files: |
+            dist/spotctl-linux-amd64
+            dist/spotctl-linux-arm64
+            dist/spotctl-darwin-amd64
+            dist/spotctl-darwin-arm64
+            dist/spotctl-windows-amd64.exe
+        env:
+          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
