@@ -87,7 +87,7 @@ func init() {
 	cloudspacesCreateCmd.Flags().StringP("kubernetes-version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
 	cloudspacesCreateCmd.Flags().String("preemption-webhook-url", "", "Preemption webhook URL")
 
-	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, "Spot nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)")
+	cloudspacesCreateCmd.Flags().StringArray("spot-nodepool", []string{}, `Spot nodepool details in either JSON format (e.g., '{"desired":1,"serverclass":"gp.vs1.medium-ord","bidprice":0.08}') or key=value pairs (e.g., desired=1,serverclass=gp.vs1.medium-ord,bidprice=0.08)`)
 	cloudspacesCreateCmd.Flags().StringArray("ondemand-nodepool", []string{}, "Ondemand nodepool details in key=value format (e.g., desired=1,serverclass=gp.vs1.medium-ord)")
 	cloudspacesCreateCmd.Flags().String("config", "", "Path to config file (YAML or JSON)")
 	cloudspacesCreateCmd.Flags().StringP("cni", "", "calico", "CNI (default: calico)")
@@ -687,15 +687,13 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	for _, poolStr := range spotPools {
 		poolParams, err := parseNodepoolParams(poolStr)
 		if err != nil {
-			klog.Warningf("Failed to parse spot nodepool params '%s': %v", poolStr, err)
-			continue
+			return nil, fmt.Errorf("failed to parse spot nodepool params: %w", err)
 		}
 
-		desired, _ := strconv.Atoi(poolParams["desired"])
-		if desired <= 0 {
-			desired = 1 // Default to 1 if not specified or invalid
+		desired, err := strconv.Atoi(poolParams["desired"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid 'desired' value: %v", poolParams["desired"])
 		}
-
 		spotPool := rxtspot.SpotNodePool{
 			Name:        uuid.New().String(),
 			Org:         poolParams["org"],
@@ -710,13 +708,12 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	for _, poolStr := range onDemandPools {
 		poolParams, err := parseNodepoolParams(poolStr)
 		if err != nil {
-			klog.Warningf("Failed to parse on-demand nodepool params '%s': %v", poolStr, err)
-			continue
+			return nil, fmt.Errorf("failed to parse on-demand nodepool params: %w", err)
 		}
 
-		desired, _ := strconv.Atoi(poolParams["desired"])
-		if desired <= 0 {
-			desired = 1 // Default to 1 if not specified or invalid
+		desired, err := strconv.Atoi(poolParams["desired"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid 'desired' value: %v", poolParams["desired"])
 		}
 
 		onDemandPool := rxtspot.OnDemandNodePool{
@@ -789,21 +786,94 @@ func validateBidPrice(bidPrice string) (string, error) {
 	return formatted, nil
 }
 
-// parseNodepoolParams parses nodepool parameters in format key1=value1,key2=value2
+// spotNodePoolParams represents the structure for spot nodepool parameters
+type spotNodePoolParams struct {
+	Desired     interface{} `json:"desired"`
+	ServerClass string      `json:"serverclass"`
+	BidPrice    float64     `json:"bidprice"`
+}
+
+// parseNodepoolParams parses nodepool parameters in either JSON format or key=value pairs
 func parseNodepoolParams(params string) (map[string]string, error) {
 	if params == "" {
 		return nil, nil
 	}
+
+	// Check if the input looks like JSON (starts with { and ends with })
+	isJSON := strings.TrimSpace(params)[0] == '{' && strings.TrimSpace(params)[len(strings.TrimSpace(params))-1] == '}'
+
+	// Try to parse as JSON if it looks like JSON
+	if isJSON {
+		var poolParams spotNodePoolParams
+		decoder := json.NewDecoder(strings.NewReader(params))
+		decoder.DisallowUnknownFields()
+
+		if err := decoder.Decode(&poolParams); err != nil {
+			// If it looks like JSON but fails to parse, return a clean error message
+			if jsonErr, ok := err.(*json.UnmarshalTypeError); ok {
+				return nil, fmt.Errorf("invalid value for field '%s': %v", jsonErr.Field, jsonErr.Value)
+			}
+			return nil, fmt.Errorf("invalid nodepool configuration: %v", err)
+		}
+
+		// Successfully parsed as JSON, convert to map[string]string
+		result := make(map[string]string)
+
+		// Handle desired value which must be a whole number
+		switch v := poolParams.Desired.(type) {
+		case float64:
+			if v != float64(int(v)) {
+				return nil, fmt.Errorf("'desired' must be a whole number, got: %v", v)
+			}
+			if v < 0 {
+				return nil, fmt.Errorf("'desired' cannot be negative: %v", v)
+			}
+			result["desired"] = strconv.Itoa(int(v))
+		case string:
+			// For string values, verify it's a valid integer
+			if _, err := strconv.Atoi(v); err != nil {
+				return nil, fmt.Errorf("'desired' must be a whole number, got: %q", v)
+			}
+			result["desired"] = v
+		default:
+			return nil, fmt.Errorf("invalid type for 'desired': %T, expected number or string", v)
+		}
+
+		// Only set serverclass and bidprice if they are not empty
+		if poolParams.ServerClass != "" {
+			result["serverclass"] = poolParams.ServerClass
+		}
+
+		// Validate and format bidprice
+		if poolParams.BidPrice < 0 {
+			return nil, fmt.Errorf("'bidprice' cannot be negative: %v", poolParams.BidPrice)
+		}
+		// Format with up to 3 decimal places and clean up trailing zeros
+		bidPriceStr := fmt.Sprintf("%.3f", poolParams.BidPrice)
+		formattedBidPrice := strings.TrimRight(strings.TrimRight(bidPriceStr, "0"), ".")
+		// Ensure the formatted price is a valid number
+		if _, err := strconv.ParseFloat(formattedBidPrice, 64); err != nil {
+			return nil, fmt.Errorf("'bidprice' must be a valid number, got: %v", poolParams.BidPrice)
+		}
+		result["bidprice"] = formattedBidPrice
+
+		return result, nil
+	}
+
+	// If we get here, it's not JSON, so try key=value parsing
+
+	// If not JSON, fall back to key=value parsing
 	result := make(map[string]string)
 	pairs := strings.Split(params, ",")
 
 	for _, pair := range pairs {
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) != 2 {
-			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value", pair)
+			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value or JSON object", pair)
 		}
 		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
+
 	return result, nil
 }
 

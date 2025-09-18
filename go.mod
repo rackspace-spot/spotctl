@@ -42,3 +42,7 @@ require (
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.4.0 // indirect
 )
+
+replace github.com/rackspace-spot/spot-go-sdk => /home/rajendra-gosavi/platform9/spot-go-sdk
+
+
