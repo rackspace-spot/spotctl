@@ -17,8 +17,8 @@ var pricingCmd = &cobra.Command{
 
 var pricingGetCmd = &cobra.Command{
 	Use:   "get",
-	Short: "Get pricing",
-	Long:  `Get a specific pricing.`,
+	Short: "Get market price for a server class",
+	Long:  `Get market price for a server class.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.GetCLIEssentials(cmd)
 		if err != nil {

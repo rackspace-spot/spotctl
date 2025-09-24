@@ -257,9 +257,12 @@ var cloudspacesCreateCmd = &cobra.Command{
 		if params.Region == "" && cfg.Region != "" {
 			params.Region = cfg.Region
 		}
-		// Validate parameters
-		if err := validateCreateParams(params, interactive); err != nil {
-			return fmt.Errorf("validation failed: %w", err)
+		if !isValidRegion(params.Region) {
+			return fmt.Errorf("region %s is not valid. Available regions: %s, %s, %s, %s, %s, %s, %s, %s", params.Region, US_CENTRAL_ORD_1, HKG_HKG_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1)
+		}
+
+		if params.Name == "" {
+			return fmt.Errorf("name is required")
 		}
 
 		// Check if context was cancelled before starting creation
@@ -280,10 +283,6 @@ var cloudspacesCreateCmd = &cobra.Command{
 			PreemptionWebhookURL: params.PreemptionWebhookURL,
 		}
 
-		// Temporary debug to verify values before API call
-		fmt.Printf("Creating cloudspace: Name=%q Org=%q Region=%q K8s=%q CNI=%q\n",
-			cloudspace.Name, cloudspace.Org, cloudspace.Region, cloudspace.KubernetesVersion, cloudspace.CNI)
-
 		if err := client.GetAPI().CreateCloudspace(ctx, cloudspace); err != nil {
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
@@ -301,17 +300,6 @@ var cloudspacesCreateCmd = &cobra.Command{
 				// Continue with pool creation
 			}
 
-			// Ensure bid price is properly formatted
-			bidPrice, err := validateBidPrice(pool.BidPrice)
-			if err != nil {
-				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
-			}
-
-			// Validate the bid price
-			bidPrice, err = getBidPrice(bidPrice)
-			if err != nil {
-				return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
-			}
 			if pool.Name == "" {
 				pool.Name = uuid.NewString()
 			}
@@ -321,23 +309,12 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Org:         params.Org,
 				Cloudspace:  params.Name,
 				ServerClass: pool.ServerClass,
-				BidPrice:    bidPrice,
+				BidPrice:    pool.BidPrice,
 				Desired:     pool.Desired,
 			}
 
-			// Create the spot node pool with context
-			createErr := client.GetAPI().CreateSpotNodePool(ctx, params.Org, spotPool)
-			if createErr != nil {
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
-				if err != nil {
-					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
-				}
-				return fmt.Errorf("failed to create spot node pool %s : %w", spotPool.Name, createErr)
-			}
-
-			// Verify the pool was created successfully
-			if _, verifyErr := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, spotPool.Name); verifyErr != nil {
-				err = fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
+			err := handleSpotNodePoolCreation(ctx, client, params.Org, params.Name, spotPool)
+			if err != nil {
 				return err
 			}
 		}
@@ -367,30 +344,21 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Desired:     pool.Desired,
 			}
 
-			// Create the on-demand node pool with context
-			createErr := client.GetAPI().CreateOnDemandNodePool(ctx, params.Org, onDemandPool)
-			if createErr != nil {
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
-				if err != nil {
-					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
-				}
-				return fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
-			}
-
-			// Verify the pool was created successfully
-			if _, verifyErr := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, onDemandPool.Name); verifyErr != nil {
-				return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
+			err := handleOnDemandNodePoolCreation(ctx, client, params.Org, params.Name, onDemandPool)
+			if err != nil {
+				return err
 			}
 		}
 
-		cloudspaceGetResponse, err := client.GetAPI().GetCloudspace(context.Background(), params.Org, params.Name)
+		cloudspaceGetResponse, err := client.GetAPI().GetCloudspace(ctx, params.Org, params.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get cloudspace: %w", err)
 		}
-		// If we got here, everything was successful
-		fmt.Printf("\n%s Successfully created cloudspace '%s' in region '%s'\n",
+
+		fmt.Printf("\n%s Successfully created cloudspace %s with kubernetes version %s in region %s\n",
 			color.GreenString("✓"),
 			color.CyanString(cloudspaceGetResponse.Name),
+			color.CyanString(cloudspaceGetResponse.KubernetesVersion),
 			color.CyanString(cloudspaceGetResponse.Region),
 		)
 
@@ -407,6 +375,38 @@ var cloudspacesCreateCmd = &cobra.Command{
 			return internal.OutputData(cloudspaceGetResponse, outputFormat)
 		}
 	},
+}
+
+// handleSpotNodePoolCreation handles the creation of a spot node pool
+func handleSpotNodePoolCreation(ctx context.Context, client *internal.Client, org string, cloudspaceName string, spotPool rxtspot.SpotNodePool) error {
+	createErr := client.GetAPI().CreateSpotNodePool(ctx, org, spotPool)
+	if createErr != nil {
+		err := client.GetAPI().DeleteCloudspace(ctx, org, cloudspaceName)
+		if err != nil {
+			return fmt.Errorf("failed to delete cloudspace %s: %w", cloudspaceName, err)
+		}
+		return fmt.Errorf("failed to create spot node pool %s : %w", spotPool.Name, createErr)
+	}
+	if _, verifyErr := client.GetAPI().GetSpotNodePool(ctx, org, spotPool.Name); verifyErr != nil {
+		return fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
+	}
+	return nil
+}
+
+// handleOnDemandNodePoolCreation handles the creation of an on-demand node pool
+func handleOnDemandNodePoolCreation(ctx context.Context, client *internal.Client, org string, cloudspaceName string, onDemandPool rxtspot.OnDemandNodePool) error {
+	createErr := client.GetAPI().CreateOnDemandNodePool(ctx, org, onDemandPool)
+	if createErr != nil {
+		err := client.GetAPI().DeleteCloudspace(ctx, org, cloudspaceName)
+		if err != nil {
+			return fmt.Errorf("failed to delete cloudspace %s: %w", cloudspaceName, err)
+		}
+		return fmt.Errorf("failed to create on-demand node pool %s : %w", onDemandPool.Name, createErr)
+	}
+	if _, verifyErr := client.GetAPI().GetOnDemandNodePool(ctx, org, onDemandPool.Name); verifyErr != nil {
+		return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
+	}
+	return nil
 }
 
 // cloudspacesGetCmd represents the cloudspaces get command
@@ -570,61 +570,9 @@ func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*
 			return nil, model.err
 		}
 	}
-
-	// Validate the collected parameters
-	if err := validateCreateParams(&model.params, true); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
-	}
 	// Return a copy to avoid any unintended aliasing of the model's internal field
 	cp := model.params
 	return &cp, nil
-}
-
-// validateCreateParams validates the provided parameters
-func validateCreateParams(params *createCloudspaceParams, interactive bool) error {
-	// Skip validation in interactive mode as we'll collect all required parameters
-	if interactive {
-		return nil
-	}
-
-	// Non-interactive mode validations
-	if params.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-
-	if params.Region == "" {
-		return fmt.Errorf("region is required")
-
-	}
-
-	if !isValidRegion(params.Region) {
-		return fmt.Errorf("region %s is not valid. Available regions: %s, %s, %s, %s, %s, %s, %s, %s", params.Region, US_CENTRAL_ORD_1, HKG_HKG_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1)
-	}
-
-	// Require at least one node pool in non-interactive mode
-	if len(params.SpotNodePools) == 0 && len(params.OnDemandNodePools) == 0 {
-		return fmt.Errorf("at least one node pool is required when using flags (use --spot-nodepool or --ondemand-nodepool)")
-	}
-
-	// Validate spot node pools' bid prices
-	for i, pool := range params.SpotNodePools {
-		if pool.BidPrice == "" {
-			return fmt.Errorf("bid price is required for spot node pool %s", pool.Name)
-		}
-		_, err := validateBidPrice(pool.BidPrice)
-		if err != nil {
-			return fmt.Errorf("invalid bid price for pool %s: %w", pool.Name, err)
-		}
-		params.SpotNodePools[i].BidPrice, _ = validateBidPrice(pool.BidPrice)
-	}
-
-	for i, pool := range params.OnDemandNodePools {
-		if pool.Desired <= 0 {
-			return fmt.Errorf("desired number of nodes must be greater than 0 for on-demand node pool %s", pool.Name)
-		}
-		params.OnDemandNodePools[i].Desired = pool.Desired
-	}
-	return nil
 }
 
 // loadParamsFromFlags loads parameters from command line flags and config file if provided
@@ -670,7 +618,6 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 		params.OnDemandNodePools = fullConfig.OnDemandNodePools
 		return params, nil
 	}
-
 	// If no config file, load all parameters from flags
 	params.Name, _ = cmd.Flags().GetString("name")
 	params.Org, _ = cmd.Flags().GetString("org")
@@ -685,11 +632,10 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 
 	// Convert string pools to actual node pool objects
 	for _, poolStr := range spotPools {
-		poolParams, err := parseNodepoolParams(poolStr)
+		poolParams, err := parseNodepoolParams(poolStr, "spot")
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse spot nodepool params: %w", err)
 		}
-
 		desired, err := strconv.Atoi(poolParams["desired"])
 		if err != nil {
 			return nil, fmt.Errorf("invalid 'desired' value: %v", poolParams["desired"])
@@ -706,7 +652,7 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	}
 
 	for _, poolStr := range onDemandPools {
-		poolParams, err := parseNodepoolParams(poolStr)
+		poolParams, err := parseNodepoolParams(poolStr, "ondemand")
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse on-demand nodepool params: %w", err)
 		}
@@ -754,26 +700,54 @@ func isInteractiveMode(cmd *cobra.Command) bool {
 
 // validateBidPrice validates and formats a bid price string to ensure it has up to 3 decimal places
 func validateBidPrice(bidPrice string) (string, error) {
-	// Check if it's a valid number
-	val, err := strconv.ParseFloat(bidPrice, 64)
+	if bidPrice == "" {
+		return "", fmt.Errorf("empty price")
+	}
+
+	// Remove all whitespace and dollar signs
+	trimmed := strings.TrimSpace(strings.ReplaceAll(bidPrice, "$", ""))
+	if trimmed == "" {
+		return "", fmt.Errorf("no valid price found in: %q", bidPrice)
+	}
+	// Try to parse as a float first
+	price, err := strconv.ParseFloat(trimmed, 64)
 	if err != nil {
-		return "", fmt.Errorf("bid price must be a valid number")
+		// If parsing fails, try to clean up the string
+		var cleanNum strings.Builder
+		decimalFound := false
+		for _, c := range trimmed {
+			if c >= '0' && c <= '9' {
+				cleanNum.WriteRune(c)
+			} else if c == '.' && !decimalFound {
+				cleanNum.WriteRune(c)
+				decimalFound = true
+			}
+		}
+
+		if cleanNum.Len() == 0 {
+			return "", fmt.Errorf("invalid price format: %q (no valid numbers found)", bidPrice)
+		}
+
+		price, err = strconv.ParseFloat(cleanNum.String(), 64)
+		if err != nil {
+			return "", fmt.Errorf("invalid price format: %q: %v", bidPrice, err)
+		}
 	}
 
 	// Ensure it's a positive number
-	if val <= 0 {
-		return "", fmt.Errorf("bid price must be greater than 0")
+	if price <= 0 {
+		return "", fmt.Errorf("price must be greater than 0")
 	}
 
 	// Format to exactly 3 decimal places
-	formatted := fmt.Sprintf("%.3f", val)
+	formatted := fmt.Sprintf("%.3f", price)
 
 	// Remove trailing zeros after decimal point for cleaner output
 	formatted = strings.TrimRight(formatted, "0")
 	formatted = strings.TrimSuffix(formatted, ".")
 
 	// Ensure we have at least one decimal place if it was a whole number
-	if !strings.Contains(formatted, ".") && val == float64(int64(val)) {
+	if !strings.Contains(formatted, ".") && price == float64(int64(price)) {
 		formatted = fmt.Sprintf("%s.000", formatted)
 	} else if strings.Count(formatted, ".") > 0 {
 		// Ensure exactly 3 decimal places
@@ -790,79 +764,110 @@ func validateBidPrice(bidPrice string) (string, error) {
 type spotNodePoolParams struct {
 	Desired     interface{} `json:"desired"`
 	ServerClass string      `json:"serverclass"`
-	BidPrice    float64     `json:"bidprice"`
+	BidPrice    string      `json:"bidprice"`
+}
+
+type ondemandNodePoolParams struct {
+	Desired     interface{} `json:"desired"`
+	ServerClass string      `json:"serverclass"`
+}
+
+func processOndemandNodePoolParams(poolParams ondemandNodePoolParams) (map[string]string, error) {
+	result := make(map[string]string)
+
+	// validate desired value which must be a whole number
+	result, err := validateDesiredCount(poolParams.Desired, result)
+	if err != nil {
+		return nil, err
+	}
+
+	// validate serverclass
+	result, err = validatedServerClass(poolParams.ServerClass, result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// parse and validate spot nodepool configurations
+func processSpotNodePoolParams(poolParams spotNodePoolParams) (map[string]string, error) {
+	result := make(map[string]string)
+
+	// validate desired value which must be a whole number
+	result, err := validateDesiredCount(poolParams.Desired, result)
+	if err != nil {
+		return nil, err
+	}
+
+	// validate serverclass
+	result, err = validatedServerClass(poolParams.ServerClass, result)
+	if err != nil {
+		return nil, err
+	}
+	bidPrice, err := validateBidPrice(poolParams.BidPrice)
+	if err != nil {
+		return nil, err
+	}
+	result["bidprice"] = bidPrice
+	return result, nil
+}
+
+func validatedServerClass(serverClass string, result map[string]string) (map[string]string, error) {
+	if serverClass == "" {
+		return nil, fmt.Errorf("'serverclass' is required")
+	}
+	result["serverclass"] = serverClass
+	return result, nil
+}
+
+func validateDesiredCount(desiredCount interface{}, result map[string]string) (map[string]string, error) {
+	switch v := desiredCount.(type) {
+	case float64:
+		if v != float64(int(v)) {
+			return nil, fmt.Errorf("'desired' must be a whole number, got: %v", v)
+		}
+		if v < 0 {
+			return nil, fmt.Errorf("'desired' cannot be negative: %v", v)
+		}
+		result["desired"] = strconv.Itoa(int(v))
+	case string:
+		// For string values, verify it's a valid integer
+		if _, err := strconv.Atoi(v); err != nil {
+			return nil, fmt.Errorf("'desired' must be a whole number, got: %q", v)
+		}
+		result["desired"] = v
+	case nil:
+		// desired is optional in JSON
+	default:
+		return nil, fmt.Errorf("invalid type for 'desired': %T, expected number or string", v)
+	}
+	return result, nil
 }
 
 // parseNodepoolParams parses nodepool parameters in either JSON format or key=value pairs
-func parseNodepoolParams(params string) (map[string]string, error) {
+func parseNodepoolParams(params string, nodepoolType string) (map[string]string, error) {
 	if params == "" {
 		return nil, nil
 	}
-
-	// Check if the input looks like JSON (starts with { and ends with })
-	isJSON := strings.TrimSpace(params)[0] == '{' && strings.TrimSpace(params)[len(strings.TrimSpace(params))-1] == '}'
-
-	// Try to parse as JSON if it looks like JSON
-	if isJSON {
-		var poolParams spotNodePoolParams
-		decoder := json.NewDecoder(strings.NewReader(params))
-		decoder.DisallowUnknownFields()
-
-		if err := decoder.Decode(&poolParams); err != nil {
-			// If it looks like JSON but fails to parse, return a clean error message
-			if jsonErr, ok := err.(*json.UnmarshalTypeError); ok {
-				return nil, fmt.Errorf("invalid value for field '%s': %v", jsonErr.Field, jsonErr.Value)
+	if strings.TrimSpace(params)[0] == '{' {
+		if nodepoolType == "spot" {
+			var poolParams spotNodePoolParams
+			if err := json.Unmarshal([]byte(params), &poolParams); err == nil {
+				return processSpotNodePoolParams(poolParams)
+			} else {
+				fmt.Printf("JSON parsing failed, falling back to key=value: %w", err)
 			}
-			return nil, fmt.Errorf("invalid nodepool configuration: %v", err)
-		}
-
-		// Successfully parsed as JSON, convert to map[string]string
-		result := make(map[string]string)
-
-		// Handle desired value which must be a whole number
-		switch v := poolParams.Desired.(type) {
-		case float64:
-			if v != float64(int(v)) {
-				return nil, fmt.Errorf("'desired' must be a whole number, got: %v", v)
+		} else if nodepoolType == "ondemand" {
+			var poolParams ondemandNodePoolParams
+			if err := json.Unmarshal([]byte(params), &poolParams); err == nil {
+				return processOndemandNodePoolParams(poolParams)
+			} else {
+				fmt.Printf("JSON parsing failed, falling back to key=value: %w", err)
 			}
-			if v < 0 {
-				return nil, fmt.Errorf("'desired' cannot be negative: %v", v)
-			}
-			result["desired"] = strconv.Itoa(int(v))
-		case string:
-			// For string values, verify it's a valid integer
-			if _, err := strconv.Atoi(v); err != nil {
-				return nil, fmt.Errorf("'desired' must be a whole number, got: %q", v)
-			}
-			result["desired"] = v
-		default:
-			return nil, fmt.Errorf("invalid type for 'desired': %T, expected number or string", v)
 		}
-
-		// Only set serverclass and bidprice if they are not empty
-		if poolParams.ServerClass != "" {
-			result["serverclass"] = poolParams.ServerClass
-		}
-
-		// Validate and format bidprice
-		if poolParams.BidPrice < 0 {
-			return nil, fmt.Errorf("'bidprice' cannot be negative: %v", poolParams.BidPrice)
-		}
-		// Format with up to 3 decimal places and clean up trailing zeros
-		bidPriceStr := fmt.Sprintf("%.3f", poolParams.BidPrice)
-		formattedBidPrice := strings.TrimRight(strings.TrimRight(bidPriceStr, "0"), ".")
-		// Ensure the formatted price is a valid number
-		if _, err := strconv.ParseFloat(formattedBidPrice, 64); err != nil {
-			return nil, fmt.Errorf("'bidprice' must be a valid number, got: %v", poolParams.BidPrice)
-		}
-		result["bidprice"] = formattedBidPrice
-
-		return result, nil
 	}
-
 	// If we get here, it's not JSON, so try key=value parsing
-
-	// If not JSON, fall back to key=value parsing
 	result := make(map[string]string)
 	pairs := strings.Split(params, ",")
 
@@ -871,9 +876,24 @@ func parseNodepoolParams(params string) (map[string]string, error) {
 		if len(kv) != 2 {
 			return nil, fmt.Errorf("invalid parameter format: %s, expected key=value or JSON object", pair)
 		}
-		result[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		if key == "bidprice" {
+			validatedPrice, err := validateBidPrice(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid bid price: %w", err)
+			}
+			value = validatedPrice
+		}
+		if key == "desired" {
+			validatedCount, err := validateDesiredCount(value, result)
+			if err != nil {
+				return nil, fmt.Errorf("invalid desired count: %w", err)
+			}
+			value = validatedCount["desired"]
+		}
+		result[key] = value
 	}
-
 	return result, nil
 }
 
@@ -1123,7 +1143,7 @@ func (m *interactiveModel) stepAddNodePools() error {
 			}
 			desired, err := strconv.Atoi(strings.TrimSpace(desiredStr))
 			if err != nil || desired < 1 {
-				fmt.Println("Please enter a valid number >= 1.")
+				fmt.Printf("%s\n", color.RedString("Please enter valid number of spot nodes >= 1"))
 				continue
 			}
 
@@ -1139,7 +1159,7 @@ func (m *interactiveModel) stepAddNodePools() error {
 			}
 			bidPrice, err = validateBidPrice(bidPrice)
 			if err != nil {
-				fmt.Printf("Invalid bid price: %v\n", err)
+				fmt.Printf("%s %v\n", color.RedString("Invalid bid price:"), color.RedString(err.Error()))
 				continue
 			}
 			fmt.Printf("%s Enter your maximum bid price (minimum: $%s) %s\n", color.GreenString("?"), minBidPrice, color.CyanString(bidPrice))
@@ -1174,7 +1194,7 @@ func (m *interactiveModel) stepAddNodePools() error {
 			}
 			desired, err := strconv.Atoi(strings.TrimSpace(desiredStr))
 			if err != nil || desired < 1 {
-				fmt.Println("Please enter a valid number >= 1.")
+				fmt.Printf("%s\n", color.RedString("Please enter valid number of on-demand nodes >= 1"))
 				continue
 			}
 

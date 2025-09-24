@@ -419,6 +419,10 @@ var spotUpdateCmd = &cobra.Command{
 				return fmt.Errorf("desired must be a valid integer: %w", err)
 			}
 		}
+		bidPrice, err = validateBidPrice(bidPrice)
+		if err != nil {
+			return fmt.Errorf("invalid bid price for pool %s: %w", name, err)
+		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
@@ -635,6 +639,20 @@ var ondemandUpdateCmd = &cobra.Command{
 				return fmt.Errorf("desired must be a valid integer: %w", err)
 			}
 		}
+		customLabelsStr, _ := cmd.Flags().GetString("custom-labels")
+		customAnnotationsStr, _ := cmd.Flags().GetString("custom-annotations")
+
+		// Parse custom labels
+		customLabels, err := parseCustomLabels(customLabelsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-labels format: %w", err)
+		}
+
+		// Parse custom annotations
+		customAnnotations, err := parseCustomAnnotations(customAnnotationsStr)
+		if err != nil {
+			return fmt.Errorf("invalid custom-annotations format: %w", err)
+		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {
@@ -642,10 +660,12 @@ var ondemandUpdateCmd = &cobra.Command{
 		}
 
 		pool := &rxtspot.OnDemandNodePool{
-			Name:       name,
-			Org:        org,
-			Cloudspace: cloudspace,
-			Desired:    desired,
+			Name:              name,
+			Org:               org,
+			Cloudspace:        cloudspace,
+			Desired:           desired,
+			CustomLabels:      customLabels,
+			CustomAnnotations: customAnnotations,
 		}
 
 		err = client.GetAPI().UpdateOnDemandNodePool(context.Background(), org, *pool)
