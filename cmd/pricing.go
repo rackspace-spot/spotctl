@@ -31,7 +31,7 @@ var pricingGetCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		pricing, err := client.GetAPI().GetMarketPriceForServerClass(context.Background(), serverclass)
+		pricing, err := client.GetAPI().Pricing().GetPriceDetailsForServerClass(context.Background(), serverclass)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}

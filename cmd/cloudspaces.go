@@ -132,7 +132,7 @@ var cloudspacesListCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		cloudspaces, err := client.GetAPI().ListCloudspaces(context.Background(), org)
+		cloudspaces, err := client.GetAPI().Cloudspaces(org).ListCloudspaces(context.Background(), org)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -182,7 +182,7 @@ var cloudspacesDeleteCmd = &cobra.Command{
 			return fmt.Errorf("failed to create client: %w", err)
 		}
 
-		err = client.GetAPI().DeleteCloudspace(context.Background(), org, name)
+		err = client.GetAPI().Cloudspaces(org).DeleteCloudspace(context.Background(), org, name)
 		if err != nil {
 			if rxtspot.IsNotFound(err) {
 				return fmt.Errorf("cloudspace '%s' not found", name)
@@ -271,7 +271,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 		}
 
 		// Create cloudspace with all required fields
-		cloudspace := rxtspot.CloudSpace{
+		cloudspace := &rxtspot.CloudSpace{
 			Name:                 params.Name,
 			Org:                  params.Org,
 			Region:               params.Region,
@@ -284,7 +284,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 		fmt.Printf("Creating cloudspace: Name=%q Org=%q Region=%q K8s=%q CNI=%q\n",
 			cloudspace.Name, cloudspace.Org, cloudspace.Region, cloudspace.KubernetesVersion, cloudspace.CNI)
 
-		if err := client.GetAPI().CreateCloudspace(ctx, cloudspace); err != nil {
+		if err := client.GetAPI().Cloudspaces(params.Org).CreateCloudspace(ctx, cloudspace); err != nil {
 			return fmt.Errorf("failed to create cloudspace: %w", err)
 		}
 		// Create spot node pools if any
@@ -293,7 +293,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			select {
 			case <-ctx.Done():
 				// Clean up the cloudspace if we're cancelled mid-creation
-				if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+				if err := client.GetAPI().Cloudspaces(params.Org).DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
 					klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
 				}
 				return fmt.Errorf("operation cancelled during spot pool creation")
@@ -325,10 +325,11 @@ var cloudspacesCreateCmd = &cobra.Command{
 				Desired:     pool.Desired,
 			}
 
+			wrappedPool := rxtspot.NewSpotNodePoolWrapper(&spotPool, params.Org)
 			// Create the spot node pool with context
-			createErr := client.GetAPI().CreateSpotNodePool(ctx, params.Org, spotPool)
+			createErr := client.GetAPI().NodePools(params.Org, params.Name).CreateNodePool(ctx, params.Org, wrappedPool)
 			if createErr != nil {
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
+				err = client.GetAPI().Cloudspaces(params.Org).DeleteCloudspace(context.Background(), params.Org, params.Name)
 				if err != nil {
 					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
 				}
@@ -336,7 +337,8 @@ var cloudspacesCreateCmd = &cobra.Command{
 			}
 
 			// Verify the pool was created successfully
-			if _, verifyErr := client.GetAPI().GetSpotNodePool(context.Background(), params.Org, spotPool.Name); verifyErr != nil {
+			var poolType rxtspot.NodePoolType = rxtspot.NodePoolTypeSpot
+			if _, verifyErr := client.GetAPI().NodePools(params.Org, params.Name).GetNodePool(context.Background(), params.Org, spotPool.Name, &poolType); verifyErr != nil {
 				err = fmt.Errorf("failed to verify creation of spot node pool %s: %w", spotPool.Name, verifyErr)
 				return err
 			}
@@ -348,7 +350,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 			select {
 			case <-ctx.Done():
 				// Clean up the cloudspace if we're cancelled mid-creation
-				if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+				if err := client.GetAPI().NodePools(params.Org, params.Name).DeleteNodePool(ctx, params.Org, params.Name); err != nil {
 					klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
 				}
 				return fmt.Errorf("operation cancelled during on-demand pool creation")
@@ -366,24 +368,24 @@ var cloudspacesCreateCmd = &cobra.Command{
 				ServerClass: pool.ServerClass,
 				Desired:     pool.Desired,
 			}
-
+			wrappedPool := rxtspot.NewOnDemandNodePoolWrapper(&onDemandPool, params.Org)
 			// Create the on-demand node pool with context
-			createErr := client.GetAPI().CreateOnDemandNodePool(ctx, params.Org, onDemandPool)
+			createErr := client.GetAPI().NodePools(params.Org, params.Name).CreateNodePool(ctx, params.Org, wrappedPool)
 			if createErr != nil {
-				err = client.GetAPI().DeleteCloudspace(context.Background(), params.Org, params.Name)
+				err = client.GetAPI().Cloudspaces(params.Org).DeleteCloudspace(context.Background(), params.Org, params.Name)
 				if err != nil {
 					return fmt.Errorf("failed to delete cloudspace %s: %w", params.Name, err)
 				}
 				return fmt.Errorf("failed to create on-demand node pool %s: %w", onDemandPool.Name, createErr)
 			}
-
+			poolType := rxtspot.NodePoolTypeOnDemand
 			// Verify the pool was created successfully
-			if _, verifyErr := client.GetAPI().GetOnDemandNodePool(context.Background(), params.Org, onDemandPool.Name); verifyErr != nil {
+			if _, verifyErr := client.GetAPI().NodePools(params.Org, params.Name).GetNodePool(context.Background(), params.Org, onDemandPool.Name, &poolType); verifyErr != nil {
 				return fmt.Errorf("failed to verify creation of on-demand node pool %s: %w", onDemandPool.Name, verifyErr)
 			}
 		}
 
-		cloudspaceGetResponse, err := client.GetAPI().GetCloudspace(context.Background(), params.Org, params.Name)
+		cloudspaceGetResponse, err := client.GetAPI().Cloudspaces(params.Org).GetCloudspace(context.Background(), params.Org, params.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get cloudspace: %w", err)
 		}
@@ -398,7 +400,7 @@ var cloudspacesCreateCmd = &cobra.Command{
 		select {
 		case <-ctx.Done():
 			// Clean up the cloudspace if we're cancelled at the last moment
-			if err := client.GetAPI().DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
+			if err := client.GetAPI().Cloudspaces(params.Org).DeleteCloudspace(ctx, params.Org, params.Name); err != nil {
 				klog.Warningf("Failed to clean up cloudspace after cancellation: %v", err)
 			}
 			return fmt.Errorf("operation cancelled during finalization")
@@ -438,7 +440,7 @@ var cloudspacesGetCmd = &cobra.Command{
 			return fmt.Errorf("failed to initialize client: %w", err)
 		}
 
-		cloudspace, err := client.GetAPI().GetCloudspace(context.Background(), org, name)
+		cloudspace, err := client.GetAPI().Cloudspaces(org).GetCloudspace(context.Background(), org, name)
 		if err != nil {
 			if rxtspot.IsNotFound(err) {
 				return fmt.Errorf("cloudspace '%s' not found", name)
@@ -493,7 +495,7 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
-		k8sConfig, err := client.GetAPI().GetCloudspaceConfig(context.Background(), org, name)
+		k8sConfig, err := client.GetAPI().Cloudspaces(org).GetCloudspaceConfig(context.Background(), org, name)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -948,7 +950,7 @@ func (m *interactiveModel) stepSelectRegion() error {
 	fmt.Println("Fetching available regions...")
 
 	// Try to get available regions
-	regions, err := m.client.GetAPI().ListRegions(context.Background())
+	regions, err := m.client.GetAPI().Regions().ListRegions(context.Background())
 	if err != nil || len(regions) == 0 {
 		// Fallback to manual input if listing regions is not permitted or empty
 		region, ierr := internal.PromptForString("Enter region (e.g., ord, iad, dfw)", m.params.Region)

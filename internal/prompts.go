@@ -28,7 +28,7 @@ func (c *Client) PromptForRegion(ctx context.Context) (string, error) {
 
 // PromptForRegionWithDefault prompts the user to select a region with an optional default using a dropdown
 func (c *Client) PromptForRegionWithDefault(ctx context.Context, defaultRegion string) (string, error) {
-	regions, err := c.api.ListRegions(ctx)
+	regions, err := c.api.Regions().ListRegions(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to list available regions: %w", err)
 	}
@@ -94,7 +94,7 @@ func (c *Client) PromptForRegionWithDefault(ctx context.Context, defaultRegion s
 }
 
 // fallbackRegionPrompt provides a fallback method for region selection if the dropdown fails
-func (c *Client) fallbackRegionPrompt(regions []rxtspot.Region, defaultRegion string) (string, error) {
+func (c *Client) fallbackRegionPrompt(regions []*rxtspot.Region, defaultRegion string) (string, error) {
 	// Find default region index if provided
 	defaultIndex := -1
 	if defaultRegion != "" {
@@ -169,7 +169,7 @@ func (c *Client) PromptForServerClass(ctx context.Context, region string) (strin
 // PromptForServerClassWithBidPrice prompts the user to select a server class and returns the class name, minimum bid price, and on-demand price
 // poolType should be either "spot" or "ondemand" to determine which pricing information to display
 func (c *Client) PromptForServerClassWithBidPrice(ctx context.Context, region, poolType string) (string, string, string, error) {
-	serverClassList, err := c.api.ListServerClasses(ctx, region)
+	serverClassList, err := c.api.ServerClasses(region).ListServerClasses(ctx, region)
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to list server classes for region %s: %w", region, err)
 	}
@@ -454,7 +454,7 @@ func (c *Client) PromptForPoolType() (string, error) {
 
 // GetOnDemandPrice retrieves the on-demand price for a given region and server class
 func (c *Client) GetOnDemandPrice(region, serverClass string) (string, error) {
-	serverClassList, err := c.api.ListServerClasses(context.Background(), region)
+	serverClassList, err := c.api.ServerClasses(region).ListServerClasses(context.Background(), region)
 	if err != nil {
 		return "", fmt.Errorf("failed to list server classes for region %s: %w", region, err)
 	}

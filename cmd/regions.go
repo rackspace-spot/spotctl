@@ -29,7 +29,7 @@ var regionsListCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		regions, err := client.GetAPI().ListRegions(context.Background())
+		regions, err := client.GetAPI().Regions().ListRegions(context.Background())
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -55,11 +55,11 @@ var regionsGetCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		regions, err := client.GetAPI().GetRegion(context.Background(), name)
+		region, err := client.GetAPI().Regions().GetRegion(context.Background(), name)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
-		return internal.OutputData(regions, outputFormat)
+		return internal.OutputData(region, outputFormat)
 	},
 }
 

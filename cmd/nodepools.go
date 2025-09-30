@@ -191,7 +191,7 @@ var spotListCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		pools, err := client.GetAPI().ListSpotNodePools(context.Background(), org, cloudspace)
+		pools, err := client.GetAPI().NodePools(org, cloudspace).ListNodePools(context.Background(), "spot", "", nil)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -228,8 +228,8 @@ var spotGetCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
-
-		pool, err := client.GetAPI().GetSpotNodePool(context.Background(), org, name)
+		poolType := rxtspot.NodePoolTypeSpot
+		pool, err := client.GetAPI().NodePools(org, name).GetNodePool(context.Background(), org, name, &poolType)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -281,7 +281,7 @@ var spotDeleteCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		err = client.GetAPI().DeleteSpotNodePool(context.Background(), org, name)
+		err = client.GetAPI().NodePools(org, name).DeleteNodePool(context.Background(), "spot", name)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -356,13 +356,27 @@ var spotCreateCmd = &cobra.Command{
 			CustomAnnotations: customAnnotations,
 		}
 
-		err = client.GetAPI().CreateSpotNodePool(context.Background(), org, *pool)
+		// Convert SpotNodePool to NodePool interface
+		var nodePool rxtspot.NodePool = pool
+
+		err = client.GetAPI().NodePools(org, cloudspace).CreateNodePool(context.Background(), org, nodePool)
 		if err != nil {
-			return fmt.Errorf("%w", err)
+			return fmt.Errorf("failed to create node pool: %w", err)
 		}
-		pool, err = client.GetAPI().GetSpotNodePool(context.Background(), org, name)
+
+		// Get the created node pool to return its details
+		poolType := rxtspot.NodePoolTypeSpot
+		createdPool, err := client.GetAPI().NodePools(org, cloudspace).GetNodePool(context.Background(), org, name, &poolType)
 		if err != nil {
-			return fmt.Errorf("%w", err)
+			return fmt.Errorf("failed to get created node pool: %w", err)
+		}
+
+		// Use type switch to handle the interface assertion safely
+		switch v := (createdPool).(type) {
+		case *rxtspot.SpotNodePool:
+			pool = v
+		default:
+			return fmt.Errorf("unexpected node pool type: %T", createdPool)
 		}
 
 		fmt.Printf("spot nodepool - %s created successfully \n", pool.Name)
@@ -435,7 +449,10 @@ var spotUpdateCmd = &cobra.Command{
 			CustomAnnotations: customAnnotations,
 		}
 
-		err = client.GetAPI().UpdateSpotNodePool(context.Background(), org, *pool)
+		// Convert SpotNodePool to NodePool interface
+		var nodePool rxtspot.NodePool = pool
+
+		err = client.GetAPI().NodePools(org, cloudspace).UpdateNodePool(context.Background(), org, nodePool)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -476,9 +493,10 @@ var ondemandListCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		pools, err := client.GetAPI().ListOnDemandNodePools(context.Background(), org, cloudspace)
+		poolType := rxtspot.NodePoolTypeOnDemand
+		pools, err := client.GetAPI().NodePools(org, cloudspace).ListNodePools(context.Background(), org, cloudspace, &poolType)
 		if err != nil {
-			return fmt.Errorf("%w", err)
+			return fmt.Errorf("failed to list on-demand node pools: %w", err)
 		}
 
 		return internal.OutputData(pools, outputFormat)
@@ -548,16 +566,26 @@ var ondemandCreateCmd = &cobra.Command{
 			CustomAnnotations: customAnnotations,
 		}
 
-		err = client.GetAPI().CreateOnDemandNodePool(context.Background(), org, *pool)
+		var nodePool rxtspot.NodePool = pool
+
+		err = client.GetAPI().NodePools(org, cloudspace).CreateNodePool(context.Background(), org, nodePool)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
 
-		pool, err = client.GetAPI().GetOnDemandNodePool(context.Background(), org, name)
+		poolType := rxtspot.NodePoolTypeOnDemand
+		createdPool, err := client.GetAPI().NodePools(org, cloudspace).GetNodePool(context.Background(), org, name, &poolType)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
 
+		// Use type switch to handle the interface assertion safely
+		switch v := (createdPool).(type) {
+		case *rxtspot.OnDemandNodePool:
+			pool = v
+		default:
+			return fmt.Errorf("unexpected node pool type: %T", createdPool)
+		}
 		fmt.Printf("on-demand nodepool - %s created successfully \n", pool.Name)
 
 		return internal.OutputData(pool, outputFormat)
@@ -591,8 +619,8 @@ var ondemandGetCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
-
-		pool, err := client.GetAPI().GetOnDemandNodePool(context.Background(), org, name)
+		pooltype := rxtspot.NodePoolTypeOnDemand
+		pool, err := client.GetAPI().NodePools(org, name).GetNodePool(context.Background(), org, name, &pooltype)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -647,8 +675,10 @@ var ondemandUpdateCmd = &cobra.Command{
 			Cloudspace: cloudspace,
 			Desired:    desired,
 		}
+		// Convert SpotNodePool to NodePool interface
+		var nodePool rxtspot.NodePool = pool
 
-		err = client.GetAPI().UpdateOnDemandNodePool(context.Background(), org, *pool)
+		err = client.GetAPI().NodePools(org, cloudspace).UpdateNodePool(context.Background(), org, nodePool)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -668,6 +698,11 @@ var ondemandDeleteCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
 			return fmt.Errorf("name is required")
+		}
+
+		cloudspace, _ := cmd.Flags().GetString("cloudspace")
+		if cloudspace == "" {
+			return fmt.Errorf("cloudspace is required")
 		}
 
 		cfg, err := config.GetCLIEssentials(cmd)
@@ -701,7 +736,7 @@ var ondemandDeleteCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		err = client.GetAPI().DeleteOnDemandNodePool(context.Background(), org, name)
+		err = client.GetAPI().NodePools(org, cloudspace).DeleteNodePool(context.Background(), org, name)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}

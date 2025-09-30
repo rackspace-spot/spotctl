@@ -39,7 +39,7 @@ var serverclassesListCmd = &cobra.Command{
 			return fmt.Errorf("region %s is not valid. Available regions: %s, %s, %s, %s, %s, %s, %s, %s", region, US_CENTRAL_ORD_1, HKG_HKG_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1)
 		}
 
-		serverclasses, err := client.GetAPI().ListServerClasses(context.Background(), region)
+		serverclasses, err := client.GetAPI().ServerClasses(region).ListServerClasses(context.Background(), region)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -64,7 +64,15 @@ var serverclassesGetCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		serverclasses, err := client.GetAPI().GetServerClass(context.Background(), name)
+		region, _ := cmd.Flags().GetString("region")
+		if region == "" {
+			region = cfg.Region
+		}
+		if !isValidRegion(region) {
+			return fmt.Errorf("region %s is not valid. Available regions: %s, %s, %s, %s, %s, %s, %s, %s", region, US_CENTRAL_ORD_1, HKG_HKG_1, AUS_SYD_1, UK_LON_1, US_EAST_IAD_1, US_CENTRAL_DFW_1, US_CENTRAL_DFW_2, US_WEST_SJC_1)
+		}
+
+		serverclasses, err := client.GetAPI().ServerClasses(region).GetServerClass(context.Background(), name)
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}

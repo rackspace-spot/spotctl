@@ -65,7 +65,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		RefreshToken: cfg.RefreshToken,
 		AccessToken:  cfg.AccessToken,
 	}
-	client, err := rxtspot.NewSpotClient(&sdkCfg)
+	client, err := rxtspot.NewClient(&sdkCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}

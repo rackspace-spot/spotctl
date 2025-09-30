@@ -32,7 +32,7 @@ var organizationsListCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 
-		orgs, err := client.GetAPI().ListOrganizations(context.Background())
+		orgs, err := client.GetAPI().Organizations().ListOrganizations(context.Background())
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
@@ -59,7 +59,7 @@ var organizationsGetCmd = &cobra.Command{
 		if orgName == "" {
 			return fmt.Errorf("organization not specified")
 		}
-		orgs, err := client.GetAPI().ListOrganizations(context.Background())
+		orgs, err := client.GetAPI().Organizations().ListOrganizations(context.Background())
 		if err != nil {
 			return fmt.Errorf("%w", err)
 		}
