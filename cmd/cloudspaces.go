@@ -507,51 +507,6 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 	},
 }
 
-// getBidPrice parses and validates the minimum bid price
-func getBidPrice(priceStr string) (string, error) {
-	if priceStr == "" {
-		return "", fmt.Errorf("empty price")
-	}
-
-	// Remove all whitespace and dollar signs
-	trimmed := strings.TrimSpace(strings.ReplaceAll(priceStr, "$", ""))
-	if trimmed == "" {
-		return "", fmt.Errorf("no valid price found in: %q", priceStr)
-	}
-
-	// Parse the price as a float64
-	price, err := strconv.ParseFloat(trimmed, 64)
-	if err != nil {
-		// Try to clean up the string and parse again
-		var cleanNum strings.Builder
-		decimalFound := false
-		for _, c := range trimmed {
-			if c >= '0' && c <= '9' {
-				cleanNum.WriteRune(c)
-			} else if c == '.' && !decimalFound {
-				cleanNum.WriteRune(c)
-				decimalFound = true
-			}
-		}
-
-		if cleanNum.Len() == 0 {
-			return "", fmt.Errorf("invalid price format: %q (no valid numbers found)", priceStr)
-		}
-
-		price, err = strconv.ParseFloat(cleanNum.String(), 64)
-		if err != nil {
-			return "", fmt.Errorf("invalid price format: %q: %v", priceStr, err)
-		}
-	}
-
-	if price <= 0 {
-		return "", fmt.Errorf("price must be greater than 0")
-	}
-
-	// Format with up to 3 decimal places
-	return fmt.Sprintf("%g", price), nil
-}
-
 // collectInteractiveInput gathers all required parameters interactively using BubbleTea
 func collectInteractiveInput(client *internal.Client, cfg *config.SpotConfig) (*createCloudspaceParams, error) {
 	fmt.Println("\nStarting interactive cloudspace creation...")
