@@ -591,17 +591,35 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse spot nodepool params: %w", err)
 		}
-		desired, err := strconv.Atoi(poolParams["desired"])
-		if err != nil {
-			return nil, fmt.Errorf("invalid 'desired' value: %v", poolParams["desired"])
+		var validatedPrice string
+		if poolParams["bidprice"] != "" {
+			validatedPrice, err = validateBidPrice(poolParams["bidprice"])
+			if err != nil {
+				return nil, fmt.Errorf("invalid bid price: %w", err)
+			}
 		}
+		var desiredCount int
+		if poolParams["desired"] != "" {
+			desiredCount, err = validateDesiredCount(poolParams["desired"])
+			if err != nil {
+				return nil, fmt.Errorf("invalid desired count: %w", err)
+			}
+		}
+		var serverClass string
+		if poolParams["serverclass"] != "" {
+			serverClass, err = validatedServerClass(poolParams["serverclass"])
+			if err != nil {
+				return nil, fmt.Errorf("invalid server class: %w", err)
+			}
+		}
+
 		spotPool := rxtspot.SpotNodePool{
 			Name:        uuid.New().String(),
-			Org:         poolParams["org"],
-			Cloudspace:  poolParams["cloudspace"],
-			ServerClass: poolParams["serverclass"],
-			BidPrice:    poolParams["bidprice"],
-			Desired:     desired,
+			Org:         params.Org,
+			Cloudspace:  params.Name,
+			ServerClass: serverClass,
+			BidPrice:    validatedPrice,
+			Desired:     desiredCount,
 		}
 		params.SpotNodePools = append(params.SpotNodePools, spotPool)
 	}
@@ -612,17 +630,26 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 			return nil, fmt.Errorf("failed to parse on-demand nodepool params: %w", err)
 		}
 
-		desired, err := strconv.Atoi(poolParams["desired"])
-		if err != nil {
-			return nil, fmt.Errorf("invalid 'desired' value: %v", poolParams["desired"])
+		var desiredCount int
+		if poolParams["desired"] != "" {
+			desiredCount, err = validateDesiredCount(poolParams["desired"])
+			if err != nil {
+				return nil, fmt.Errorf("invalid desired count: %w", err)
+			}
 		}
-
+		var serverClass string
+		if poolParams["serverclass"] != "" {
+			serverClass, err = validatedServerClass(poolParams["serverclass"])
+			if err != nil {
+				return nil, fmt.Errorf("invalid server class: %w", err)
+			}
+		}
 		onDemandPool := rxtspot.OnDemandNodePool{
 			Name:        uuid.New().String(),
-			Org:         poolParams["org"],
-			Cloudspace:  poolParams["cloudspace"],
-			ServerClass: poolParams["serverclass"],
-			Desired:     desired,
+			Org:         params.Org,
+			Cloudspace:  params.Name,
+			ServerClass: serverClass,
+			Desired:     desiredCount,
 		}
 		params.OnDemandNodePools = append(params.OnDemandNodePools, onDemandPool)
 	}
@@ -711,93 +738,43 @@ func validateBidPrice(bidPrice string) (string, error) {
 			formatted = fmt.Sprintf("%s%s", formatted, strings.Repeat("0", 3-len(parts[1])))
 		}
 	}
-
 	return formatted, nil
 }
 
-// spotNodePoolParams represents the structure for spot nodepool parameters
-type spotNodePoolParams struct {
-	Desired     interface{} `json:"desired"`
-	ServerClass string      `json:"serverclass"`
-	BidPrice    string      `json:"bidprice"`
-}
-
-type ondemandNodePoolParams struct {
-	Desired     interface{} `json:"desired"`
-	ServerClass string      `json:"serverclass"`
-}
-
-func processOndemandNodePoolParams(poolParams ondemandNodePoolParams) (map[string]string, error) {
-	result := make(map[string]string)
-
-	// validate desired value which must be a whole number
-	result, err := validateDesiredCount(poolParams.Desired, result)
-	if err != nil {
-		return nil, err
-	}
-
-	// validate serverclass
-	result, err = validatedServerClass(poolParams.ServerClass, result)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// parse and validate spot nodepool configurations
-func processSpotNodePoolParams(poolParams spotNodePoolParams) (map[string]string, error) {
-	result := make(map[string]string)
-
-	// validate desired value which must be a whole number
-	result, err := validateDesiredCount(poolParams.Desired, result)
-	if err != nil {
-		return nil, err
-	}
-
-	// validate serverclass
-	result, err = validatedServerClass(poolParams.ServerClass, result)
-	if err != nil {
-		return nil, err
-	}
-	bidPrice, err := validateBidPrice(poolParams.BidPrice)
-	if err != nil {
-		return nil, err
-	}
-	result["bidprice"] = bidPrice
-	return result, nil
-}
-
-func validatedServerClass(serverClass string, result map[string]string) (map[string]string, error) {
+func validatedServerClass(serverClass string) (string, error) {
 	if serverClass == "" {
-		return nil, fmt.Errorf("'serverclass' is required")
+		return "", fmt.Errorf("'serverclass' is required")
 	}
-	result["serverclass"] = serverClass
-	return result, nil
+	return serverClass, nil
 }
 
-func validateDesiredCount(desiredCount interface{}, result map[string]string) (map[string]string, error) {
+func validateDesiredCount(desiredCount interface{}) (int, error) {
 	switch v := desiredCount.(type) {
+	case int:
+		if v < 0 {
+			return 0, fmt.Errorf("'desired' cannot be negative: %v", v)
+		}
+		return v, nil
 	case float64:
 		if v != float64(int(v)) {
-			return nil, fmt.Errorf("'desired' must be a whole number, got: %v", v)
+			return 0, fmt.Errorf("'desired' must be a whole number, got: %v", v)
 		}
 		if v < 0 {
-			return nil, fmt.Errorf("'desired' cannot be negative: %v", v)
+			return 0, fmt.Errorf("'desired' cannot be negative: %v", v)
 		}
-		result["desired"] = strconv.Itoa(int(v))
+		return int(v), nil
 	case string:
 		// For string values, verify it's a valid integer
 		if _, err := strconv.Atoi(v); err != nil {
-			return nil, fmt.Errorf("'desired' must be a whole number, got: %q", v)
+			return 0, fmt.Errorf("'desired' must be a whole number, got: %q", v)
 		}
-		result["desired"] = v
+		return strconv.Atoi(v)
 	case nil:
 		// desired is optional in JSON
 	default:
-		return nil, fmt.Errorf("invalid type for 'desired': %T, expected number or string", v)
+		return 0, fmt.Errorf("invalid type for 'desired': %T, expected number or string", v)
 	}
-	return result, nil
+	return 0, nil
 }
 
 // parseNodepoolParams parses nodepool parameters in either JSON format or key=value pairs
@@ -806,20 +783,18 @@ func parseNodepoolParams(params string, nodepoolType string) (map[string]string,
 		return nil, nil
 	}
 	if strings.TrimSpace(params)[0] == '{' {
-		if nodepoolType == "spot" {
-			var poolParams spotNodePoolParams
-			if err := json.Unmarshal([]byte(params), &poolParams); err == nil {
-				return processSpotNodePoolParams(poolParams)
-			} else {
-				fmt.Printf("JSON parsing failed, falling back to key=value: %w", err)
+		var jsonParams map[string]interface{}
+		if err := json.Unmarshal([]byte(params), &jsonParams); err == nil {
+			result := make(map[string]string)
+			for k, v := range jsonParams {
+				if s, ok := v.(string); ok {
+					result[k] = s
+				} else {
+					//convert non-string values into string
+					result[k] = fmt.Sprintf("%v", v)
+				}
 			}
-		} else if nodepoolType == "ondemand" {
-			var poolParams ondemandNodePoolParams
-			if err := json.Unmarshal([]byte(params), &poolParams); err == nil {
-				return processOndemandNodePoolParams(poolParams)
-			} else {
-				fmt.Printf("JSON parsing failed, falling back to key=value: %w", err)
-			}
+			return result, nil
 		}
 	}
 	// If we get here, it's not JSON, so try key=value parsing
@@ -833,20 +808,7 @@ func parseNodepoolParams(params string, nodepoolType string) (map[string]string,
 		}
 		key := strings.TrimSpace(kv[0])
 		value := strings.TrimSpace(kv[1])
-		if key == "bidprice" {
-			validatedPrice, err := validateBidPrice(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid bid price: %w", err)
-			}
-			value = validatedPrice
-		}
-		if key == "desired" {
-			validatedCount, err := validateDesiredCount(value, result)
-			if err != nil {
-				return nil, fmt.Errorf("invalid desired count: %w", err)
-			}
-			value = validatedCount["desired"]
-		}
+
 		result[key] = value
 	}
 	return result, nil
