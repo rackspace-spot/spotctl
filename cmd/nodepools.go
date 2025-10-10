@@ -419,10 +419,6 @@ var spotUpdateCmd = &cobra.Command{
 				return fmt.Errorf("desired must be a valid integer: %w", err)
 			}
 		}
-		bidPrice, err = validateBidPrice(bidPrice)
-		if err != nil {
-			return fmt.Errorf("invalid bid price for pool %s: %w", name, err)
-		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
 		if err != nil {

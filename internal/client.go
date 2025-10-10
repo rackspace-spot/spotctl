@@ -44,7 +44,6 @@ func DefaultConfig() ClientConfig {
 	} else {
 		authURL = OAuthURL
 	}
-
 	return ClientConfig{
 		BaseURL:  baseURL,
 		OAuthURL: authURL,
@@ -57,7 +56,6 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if cfg.RefreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required. Please run 'spotctl configure' to set it up")
 	}
-
 	sdkCfg := rxtspot.Config{
 		BaseURL:      cfg.BaseURL,
 		OAuthURL:     cfg.OAuthURL,
@@ -69,13 +67,11 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
-
 	// Let the SDK handle token validation and refresh
 	_, err = client.Authenticate(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to authenticate: %w", err)
 	}
-
 	return &Client{
 		api: client,
 	}, nil

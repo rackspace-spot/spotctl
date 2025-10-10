@@ -587,7 +587,7 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 
 	// Convert string pools to actual node pool objects
 	for _, poolStr := range spotPools {
-		poolParams, err := parseNodepoolParams(poolStr, "spot")
+		poolParams, err := parseNodepoolParams(poolStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse spot nodepool params: %w", err)
 		}
@@ -625,7 +625,7 @@ func loadParamsFromFlags(cmd *cobra.Command) (*createCloudspaceParams, error) {
 	}
 
 	for _, poolStr := range onDemandPools {
-		poolParams, err := parseNodepoolParams(poolStr, "ondemand")
+		poolParams, err := parseNodepoolParams(poolStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse on-demand nodepool params: %w", err)
 		}
@@ -778,7 +778,7 @@ func validateDesiredCount(desiredCount interface{}) (int, error) {
 }
 
 // parseNodepoolParams parses nodepool parameters in either JSON format or key=value pairs
-func parseNodepoolParams(params string, nodepoolType string) (map[string]string, error) {
+func parseNodepoolParams(params string) (map[string]string, error) {
 	if params == "" {
 		return nil, nil
 	}
