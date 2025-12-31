@@ -43,6 +43,12 @@ spotctl configure
 ### Authentication
 - `spotctl configure` - Configure spotctl
 
+To configure spotctl, you need to pass the organization, region and refresh token. If you don't have a refresh token, you can get it from the Rackspace Spot Console under API Access section. You can use Terraform OR spotctl option to get the refresh token. 
+
+If you do not have region information, you can get it list of regions using `spotctl regions list`.
+
+
+
 ### Cloudspaces (Kubernetes Clusters)
 - `spotctl cloudspaces list` - List all cloudspaces
 - `spotctl cloudspaces get <name>` - Get details of a specific cloudspace
