@@ -1,6 +1,6 @@
 # Rackspace Spot CLI (spotctl)
 
-A command-line tool to manage Rackspace Spot resources including cloudspaces, node pools, organizations, and more.
+A command-line tool to manage Rackspace Spot resources including Kubernetes and VM cloudspaces, node pools, organizations, and more. To learn more about VM lifecycle management, please refer to [VM_README.md](VM_README.md). Below is a summary of the available commands for managing Kubernetes cloudspaces and node pools.
 
 ## Features
 - Complete resource lifecycle management
@@ -16,6 +16,7 @@ A command-line tool to manage Rackspace Spot resources including cloudspaces, no
 
 - User should have access to Rackspace Spot Organization.
 - User should have Refresh Token for the corresponding Organization.
+- `<org>` refers to organization name whenever used in commands.
 
 Download the binary from the releases page: https://github.com/rackspace-spot/spotctl/releases
 
@@ -31,7 +32,7 @@ spotctl --version
 
 ## Configuration
 
-In order to use spotctl, you need to configure your spotctl: You need pass the organization, region and refresh token.
+In order to use spotctl, you need to configure your spotctl: You need pass the organization name, region and refresh token.
 
 ```bash
 # Run the interactive configuration wizard
@@ -66,7 +67,7 @@ spotctl configure
 
 ### Organizations
 - `spotctl organizations list` - List organizations
-- `spotctl organizations get <id>` - Get organization details
+- `spotctl organizations get --name <name>` - Get organization details by name
 
 ### Pricing
 - `spotctl pricing get <serverclass>` - Get pricing information
@@ -137,7 +138,6 @@ spotctl organizations get org-123 --output json
 ```bash
 # Create spot node pool
 spotctl nodepools spot create \
-  --name spot-workers \
   --namespace org-123 \
   --cloudspace prod-cluster \
   --serverclass gp.vs1.medium-iad \
@@ -152,7 +152,6 @@ spotctl nodepools spot list --namespace org-123 --output yaml
 ```bash
 # Create on-demand node pool
 spotctl nodepools ondemand create \
-  --name critical-workers \
   --namespace org-123 \
   --cloudspace prod-cluster \
   --serverclass mem.vs1.large-iad \
@@ -169,16 +168,16 @@ spotctl cloudspaces create \
   --name cli-test-205 \
   --region us-central-ord-1 \
   --org hooli \
-  --spot-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0412,serverclass=gp.vs1.medium-ord,desired=2,bidprice=0.09"
+  --spot-nodepool "serverclass=gp.vs1.medium-ord,desired=2,bidprice=0.09"
 
 spotctl cloudspaces create \
   --name cli-test-157 \
   --region us-central-ord-1 \
   --org hooli \
-  --ondemand-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0411,serverclass=gp.vs1.medium-ord,desired=2"
+  --ondemand-nodepool "serverclass=gp.vs1.medium-ord,desired=2"
 
 
-spotctl nodepools spot create --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord --bidprice 0.08
+spotctl nodepools spot create --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord --bidprice 0.08
 
 spotctl nodepools spot update --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace cli-test-153 --desired 2 --bidprice 0.08
 
@@ -195,7 +194,7 @@ spotctl nodepools ondemand get --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
 
 spotctl nodepools ondemand update --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace cli-test-153 --desired 2
 
-spotctl nodepools ondemand create --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord
+spotctl nodepools ondemand create --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord
 
 spotctl nodepools ondemand delete --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
 
@@ -208,16 +207,16 @@ spotctl cloudspaces create \
   --name cli-test-205 \
   --region us-central-ord-1 \
   --org hooli \
-  --spot-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0412,serverclass=gp.vs1.medium-ord,desired=2,bidprice=0.09"
+  --spot-nodepool "serverclass=gp.vs1.medium-ord,desired=2,bidprice=0.09"
 
 spotctl cloudspaces create \
   --name cli-test-157 \
   --region us-central-ord-1 \
   --org hooli \
-  --ondemand-nodepool "name=d21538b9-8e65-4c09-ba2d-8ab9651d0411,serverclass=gp.vs1.medium-ord,desired=2"
+  --ondemand-nodepool "serverclass=gp.vs1.medium-ord,desired=2"
 
 
-spotctl nodepools spot create --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord --bidprice 0.08
+spotctl nodepools spot create --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord --bidprice 0.08
 
 spotctl nodepools spot update --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 --cloudspace cli-test-153 --desired 2 --bidprice 0.08
 
@@ -234,7 +233,7 @@ spotctl nodepools ondemand get --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
 
 spotctl nodepools ondemand update --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace cli-test-153 --desired 2
 
-spotctl nodepools ondemand create --name b7ea7dd1-f421-4b81-96a5-c28a6400a406 --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord
+spotctl nodepools ondemand create --cloudspace cli-test-153 --desired 1 --serverclass gp.vs1.medium-ord
 
 spotctl nodepools ondemand delete --name b7ea7dd1-f421-4b81-96a5-c28a6400a406
 

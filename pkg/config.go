@@ -29,13 +29,13 @@ func GetConfigPath() (string, error) {
 func LoadConfig() (*SpotConfig, error) {
 	path, err := GetConfigPath()
 	if err != nil {
-		return nil, fmt.Errorf("spot config not found, run 'spotcli configure' to configure your default orgID, token, and region")
+		return nil, fmt.Errorf("spot config not found, run 'spotctl configure' to configure your default organization name, token, and region")
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such file or directory") {
-			return nil, fmt.Errorf("spot config not found, run 'spotcli configure' to configure your default orgID, token, and region")
+			return nil, fmt.Errorf("spot config not found, run 'spotctl configure' to configure your default organization name, token, and region")
 		}
 		return nil, err
 	}
