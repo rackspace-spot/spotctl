@@ -1,9 +1,9 @@
-# Rackspace Spot CLI — Virtual Machines (VM) Resources
+# Rackspace Spot CLI — Virtual Machines (VM) Resources Management
 
-This guide covers all VM-related commands in `spotctl`: **VM Cloudspaces**, **VM Pools**, and **VM SSH Keys**. This guide is focused on VM lifecycle management in Rackspace Spot.
+This guide covers all VM-related commands in `spotctl`: **VM Cloudspaces**, **VM Pools**, and **VM SSH Keys**. This guide is focused on VM resource lifecycle management in Rackspace Spot.
 
 ## Features
-- Complete Virtual Machines (VM) lifecycle management
+- Complete Virtual Machines (VM) resource lifecycle management
 - Multiple output formats (JSON, YAML, Table)
 - OAuth2 authentication
 - Interactive command structure
