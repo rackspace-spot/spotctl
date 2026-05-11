@@ -88,11 +88,12 @@ var vmcsListCmd = &cobra.Command{
 	Long:  `List all VM cloudspaces in an organization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get CLI configuration: %w", err)
+		}
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			if err == nil && cfg.Org != "" {
-				org = cfg.Org
-			}
+		if org == "" && cfg != nil && cfg.Org != "" {
+			org = cfg.Org
 		}
 		if org == "" {
 			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
@@ -145,14 +146,17 @@ var vmcsCreateCmd = &cobra.Command{
 		}
 
 		// Set defaults from config
-		if params.Org == "" && cfg.Org != "" {
+		if params.Org == "" && cfg != nil && cfg.Org != "" {
 			params.Org = cfg.Org
 		}
-		if params.Region == "" && cfg.Region != "" {
+		if params.Region == "" && cfg != nil && cfg.Region != "" {
 			params.Region = cfg.Region
 		}
 		if params.Name == "" {
 			return fmt.Errorf("name is required")
+		}
+		if params.Org == "" {
+			return fmt.Errorf("Organization is required")
 		}
 		if params.Region == "" {
 			return fmt.Errorf("region is required")
@@ -318,10 +322,8 @@ var vmcsDeleteCmd = &cobra.Command{
 		}
 
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" {
-			if err == nil && cfg.Org != "" {
-				org = cfg.Org
-			}
+		if org == "" && cfg != nil && cfg.Org != "" {
+			org = cfg.Org
 		}
 		if org == "" {
 			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
@@ -496,6 +498,8 @@ func loadVMCSParamsFromFlags(cmd *cobra.Command) (*createVMCloudSpaceParams, err
 				return nil, fmt.Errorf("invalid desired count: %w", err)
 			}
 			pool.Desired = desired
+		} else {
+			pool.Desired = 1 // defaults to 1 instance
 		}
 		if v, ok := poolParams["pooltype"]; ok {
 			pool.PoolType = v

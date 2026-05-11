@@ -72,8 +72,11 @@ var vmPoolListCmd = &cobra.Command{
 	Long:  `List all VM pools for a VM cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get CLI configuration: %w", err)
+		}
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && err == nil && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
@@ -107,7 +110,7 @@ var vmPoolCreateCmd = &cobra.Command{
 		}
 
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
@@ -292,7 +295,7 @@ var vmPoolDeleteCmd = &cobra.Command{
 		}
 
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && err == nil && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
