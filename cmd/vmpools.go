@@ -133,6 +133,11 @@ var vmPoolCreateCmd = &cobra.Command{
 			return fmt.Errorf("invalid bid price: %w", err)
 		}
 
+		validateDesired, err := validateDesiredCount(desired)
+		if err != nil {
+			return fmt.Errorf("invalid desired count: %w", err)
+		}
+
 		// Handle cloud-init user data
 		vmUserData, _ := cmd.Flags().GetString("vm-userdata")
 		vmUserDataFromScript, _ := cmd.Flags().GetString("vm-userdata-from-script")
@@ -161,7 +166,7 @@ var vmPoolCreateCmd = &cobra.Command{
 			VMCloudSpace: vmCloudSpace,
 			ServerClass:  serverClass,
 			BidPrice:     validatedPrice,
-			Desired:      desired,
+			Desired:      validateDesired,
 			PoolType:     poolType,
 			VMImage:      vmImage,
 			VMUserData:   finalUserData,
@@ -178,7 +183,7 @@ var vmPoolCreateCmd = &cobra.Command{
 		fmt.Printf(" VMPool Name: %s\n", color.CyanString(vmPoolName))
 		fmt.Printf("  Server Class: %s\n", color.CyanString(serverClass))
 		fmt.Printf("  Bid Price: %s\n", color.CyanString(validatedPrice))
-		fmt.Printf("  Desired: %s\n", color.CyanString(fmt.Sprintf("%d", desired)))
+		fmt.Printf("  Desired: %s\n", color.CyanString(fmt.Sprintf("%d", validateDesired)))
 		fmt.Printf("  Pool Type: %s\n", color.CyanString(poolType))
 		fmt.Printf("  VM Image: %s\n", color.CyanString(vmImage))
 		if finalUserData != "" {

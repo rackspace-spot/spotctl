@@ -55,8 +55,11 @@ var vmSSHKeyListCmd = &cobra.Command{
 	Long:  `List all VM SSH keys in an organization.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.GetCLIEssentials(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && err == nil && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
@@ -88,7 +91,7 @@ var vmSSHKeyCreateCmd = &cobra.Command{
 		}
 
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
@@ -174,7 +177,7 @@ var vmSSHKeyDeleteCmd = &cobra.Command{
 		}
 
 		org, _ := cmd.Flags().GetString("org")
-		if org == "" && err == nil && cfg.Org != "" {
+		if org == "" && cfg != nil && cfg.Org != "" {
 			org = cfg.Org
 		}
 		if org == "" {
