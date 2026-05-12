@@ -15,16 +15,16 @@ import (
 var configureCmd = &cobra.Command{
 	Use:   "configure",
 	Short: "Set up Spot CLI defaults",
-	Long:  `configure default orgID, token, and region for the Spot CLI.`,
+	Long:  `Configure default organization name, token, and region for the Spot CLI.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 
-		fmt.Print("Organization ID: ")
-		orgID, err := reader.ReadString('\n')
+		fmt.Print("Organization Name: ")
+		orgName, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("failed to read organization ID: %w", err)
+			return fmt.Errorf("failed to read organization name: %w", err)
 		}
-		orgID = strings.TrimSpace(orgID)
+		orgName = strings.TrimSpace(orgName)
 
 		fmt.Print("Refresh Token: ")
 		refreshToken, err := reader.ReadString('\n')
@@ -56,7 +56,7 @@ var configureCmd = &cobra.Command{
 			return fmt.Errorf("%w", err)
 		}
 		cfg := &config.SpotConfig{
-			Org:          orgID,
+			Org:          orgName,
 			RefreshToken: refreshToken,
 			AccessToken:  access_token,
 			Region:       region,

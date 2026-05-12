@@ -77,12 +77,12 @@ func init() {
 	cloudspacesCmd.AddCommand(cloudspacesGetConfigCmd)
 
 	// Add flags for cloudspaces list
-	cloudspacesListCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesListCmd.Flags().String("org", "", "Organization name")
 	cloudspacesListCmd.Flags().StringP("output", "o", "json", "Output format (json, table, yaml)")
 
 	// Add flags for cloudspaces create
 	cloudspacesCreateCmd.Flags().String("name", "", "Cloudspace name")
-	cloudspacesCreateCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesCreateCmd.Flags().String("org", "", "Organization name")
 	cloudspacesCreateCmd.Flags().String("region", "", "Region ")
 	cloudspacesCreateCmd.Flags().StringP("kubernetes-version", "", "1.31.1", "Kubernetes version (default: 1.31.1)")
 	cloudspacesCreateCmd.Flags().String("preemption-webhook-url", "", "Preemption webhook URL")
@@ -94,18 +94,18 @@ func init() {
 
 	// Add flags for cloudspaces get
 	cloudspacesGetCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesGetCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesGetCmd.Flags().String("org", "", "Organization name")
 	cloudspacesGetCmd.MarkFlagRequired("name")
 
 	// Add flags for cloudspaces get-config
 	cloudspacesGetConfigCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesGetConfigCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesGetConfigCmd.Flags().String("org", "", "Organization name")
 	cloudspacesGetConfigCmd.Flags().String("file", "", "Output file name (default: <cloudspace_name>.yaml)")
 	cloudspacesGetConfigCmd.MarkFlagRequired("name")
 
 	// Add flags for cloudspaces delete
 	cloudspacesDeleteCmd.Flags().String("name", "", "Cloudspace name (required)")
-	cloudspacesDeleteCmd.Flags().String("org", "", "Organization ID")
+	cloudspacesDeleteCmd.Flags().String("org", "", "Organization name")
 	cloudspacesDeleteCmd.MarkFlagRequired("name")
 	cloudspacesDeleteCmd.Flags().BoolP("yes", "y", false, "Automatic yes to prompts; assume \"yes\" as answer")
 }
@@ -124,7 +124,7 @@ var cloudspacesListCmd = &cobra.Command{
 			}
 		}
 		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
 		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
@@ -162,7 +162,7 @@ var cloudspacesDeleteCmd = &cobra.Command{
 			}
 		}
 		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
 		}
 		yes, _ := cmd.Flags().GetBool("yes")
 		if !yes {
@@ -430,7 +430,7 @@ var cloudspacesGetCmd = &cobra.Command{
 			org = cfg.Org
 		}
 		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
 		}
 
 		client, err := internal.NewClientWithTokens(cfg.RefreshToken, cfg.AccessToken)
@@ -473,7 +473,7 @@ var cloudspacesGetConfigCmd = &cobra.Command{
 			}
 		}
 		if org == "" {
-			return fmt.Errorf("organization not specified (use --org or run 'spotcli configure')")
+			return fmt.Errorf("organization not specified (use --org or run 'spotctl configure')")
 		}
 
 		name, _ := cmd.Flags().GetString("name")
