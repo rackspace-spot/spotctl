@@ -15,7 +15,7 @@ require (
 	k8s.io/klog/v2 v2.130.1
 )
 
-require github.com/rackspace-spot/spot-go-sdk v0.2.0
+require github.com/rackspace-spot/spot-go-sdk v0.2.2-0.20260909093127-504e98a28461
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
