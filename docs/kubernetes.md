@@ -56,6 +56,8 @@ spotctl configure
 - `spotctl nodepools spot create` - Create a spot node pool
 - `spotctl nodepools ondemand list` - List on-demand node pools
 - `spotctl nodepools ondemand create` - Create an on-demand node pool
+- `spotctl nodepools autopilot list` - List autopilot node pools
+- `spotctl nodepools autopilot create` - Create an autopilot node pool
 
 ## Usage Examples
 
@@ -144,6 +146,51 @@ spotctl nodepools ondemand create \
 # List on-demand pools
 spotctl nodepools ondemand list --namespace org-123
 ```
+
+#### Autopilot Node Pools
+
+An autopilot node pool takes a total vCPU target and an hourly budget ceiling. Spot picks the
+eligible server classes and bids across them to fill the target, so you do not name a server class
+or a node count.
+
+```bash
+# Create an autopilot node pool
+spotctl nodepools autopilot create \
+  --cloudspace prod-cluster \
+  --vcpu-total 32 \
+  --budget-per-hour 2.50
+
+# Only pack from 4 GB/vCPU classes, 4 to 16 vCPUs per node
+spotctl nodepools autopilot create \
+  --cloudspace prod-cluster \
+  --vcpu-total 32 \
+  --budget-per-hour 2.50 \
+  --memory-per-vcpu 4 \
+  --vcpu-per-node-min 4 \
+  --vcpu-per-node-max 16
+
+# List autopilot pools
+spotctl nodepools autopilot list --cloudspace prod-cluster --output yaml
+
+# Show one pool with its per-server-class allocations
+spotctl nodepools autopilot get --name b7ea7dd1-f421-4b81-96a5-c28a6400a420
+
+# Raise the target. Flags you leave out keep their current values.
+spotctl nodepools autopilot update \
+  --name b7ea7dd1-f421-4b81-96a5-c28a6400a420 \
+  --vcpu-total 64
+
+spotctl nodepools autopilot delete --name b7ea7dd1-f421-4b81-96a5-c28a6400a420
+```
+
+Notes:
+
+- `--region` defaults to the cloudspace's region, which is the only value the API accepts.
+- `--vcpu-total` must be a multiple of the smallest eligible node size in the region, so an exact
+  pack exists. The API rejects the create otherwise and names the size it wanted.
+- `--budget-per-hour` is a bid ceiling, not a spend cap. You are billed the market clearing rate,
+  which is always at or below the ceiling.
+- Region and cloudspace are fixed once the pool exists; `update` does not offer them.
 
 #### Some commands examples 
 
