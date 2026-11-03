@@ -117,9 +117,6 @@ var autopilotListCmd = &cobra.Command{
 	Long:  `List all autopilot node pools in a cloudspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
-		if cloudspace == "" {
-			return fmt.Errorf("cloudspace is required")
-		}
 		api, org, err := autopilotAPI(cmd)
 		if err != nil {
 			return err
@@ -141,9 +138,6 @@ var autopilotGetCmd = &cobra.Command{
 	Long:  `Get a single autopilot node pool, including its per-server-class allocations.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		if name == "" {
-			return fmt.Errorf("name is required")
-		}
 		api, org, err := autopilotAPI(cmd)
 		if err != nil {
 			return err
@@ -166,13 +160,7 @@ var autopilotCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := uuid.New().String()
 		cloudspace, _ := cmd.Flags().GetString("cloudspace")
-		if cloudspace == "" {
-			return fmt.Errorf("cloudspace is required")
-		}
 		budget, _ := cmd.Flags().GetString("budget-per-hour")
-		if budget == "" {
-			return fmt.Errorf("budget-per-hour is required")
-		}
 		vcpuTotal, err := flagInt(cmd, "vcpu-total")
 		if err != nil {
 			return err
@@ -254,9 +242,6 @@ var autopilotUpdateCmd = &cobra.Command{
 	Long:  `Update an autopilot node pool. Region and cloudspace are immutable; everything else may change.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		if name == "" {
-			return fmt.Errorf("name is required")
-		}
 		api, org, err := autopilotAPI(cmd)
 		if err != nil {
 			return err
@@ -333,9 +318,6 @@ var autopilotDeleteCmd = &cobra.Command{
 	Long:  `Delete an autopilot node pool. Its child spot node pools are removed with it.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, _ := cmd.Flags().GetString("name")
-		if name == "" {
-			return fmt.Errorf("name is required")
-		}
 
 		yes, _ := cmd.Flags().GetBool("yes")
 		if !yes {
